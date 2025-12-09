@@ -5,6 +5,7 @@ namespace App\Http\Controllers;
 use App\Product;
 use App\SaleItem;
 use App\DemandForecast;
+use App\Category;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Http;

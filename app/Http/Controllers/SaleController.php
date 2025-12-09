@@ -16,18 +16,24 @@ class SaleController extends Controller
 
     public function index(Request $request)
     {
+        $validated = $request->validate([
+            'search' => 'nullable|string',
+            'date_from' => 'nullable|date',
+            'date_to' => 'nullable|date|after_or_equal:date_from',
+        ]);
+
         $query = Sale::with('user', 'items.product');
 
-        if ($request->has('search')) {
-            $query->where('sale_number', 'like', '%' . $request->search . '%');
+        if ($request->filled('search')) {
+            $query->where('sale_number', 'like', '%' . $validated['search'] . '%');
         }
 
-        if ($request->has('date_from')) {
-            $query->whereDate('created_at', '>=', $request->date_from);
+        if ($request->filled('date_from')) {
+            $query->whereDate('created_at', '>=', $validated['date_from']);
         }
 
-        if ($request->has('date_to')) {
-            $query->whereDate('created_at', '<=', $request->date_to);
+        if ($request->filled('date_to')) {
+            $query->whereDate('created_at', '<=', $validated['date_to']);
         }
 
         $sales = $query->latest()->paginate(15);
