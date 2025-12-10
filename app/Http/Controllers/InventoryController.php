@@ -55,7 +55,29 @@ class InventoryController extends Controller
                 $query->where('type', $request->type);
             }
 
-            $movements = $query->latest()->paginate(15);
+            // Ledger-style ordering: oldest first to compute running balances
+            $movements = $query->orderBy('created_at', 'asc')->get();
+
+            // Compute running balance per product (based on all recorded movements)
+            $balances = [];
+            foreach ($movements as $movement) {
+                $productId = $movement->product_id;
+                if (!isset($balances[$productId])) {
+                    $balances[$productId] = 0;
+                }
+
+                // Stock before applying this movement
+                $movement->opening_balance = $balances[$productId];
+
+                if ($movement->type === 'out') {
+                    $balances[$productId] -= $movement->quantity;
+                } else {
+                    // Treat "in" and "adjustment" as positive adjustments
+                    $balances[$productId] += $movement->quantity;
+                }
+
+                $movement->running_balance = $balances[$productId];
+            }
         }
 
         return view('inventory.index', compact('movements', 'products', 'showBalance', 'balanceProducts'));
@@ -71,6 +93,11 @@ class InventoryController extends Controller
         ]);
 
         $quantity = $request->type === 'out' ? -$request->quantity : $request->quantity;
+
+        // Prevent taking stock out when there is not enough on hand
+        if ($request->type === 'out' && $product->quantity < $request->quantity) {
+            return redirect()->back()->with('error', 'Cannot stock out more than available quantity.');
+        }
 
         InventoryMovement::create([
             'product_id' => $product->id,

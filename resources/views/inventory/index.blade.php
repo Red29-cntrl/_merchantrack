@@ -13,10 +13,17 @@
         @endif
     </div>
 
+    @if(session('success'))
+    <div class="alert alert-success">{{ session('success') }}</div>
+    @endif
+    @if(session('error'))
+    <div class="alert alert-danger">{{ session('error') }}</div>
+    @endif
+
     @if(auth()->user()->isStaff())
     <div class="card mb-3">
         <div class="card-header">
-            <h5 class="mb-0"><i class="fas fa-boxes me-2"></i>Current Stock Levels</h5>
+            <h5 class="mb-0"><i class="fas fa-boxes me-2"></i>Stock Levels</h5>
         </div>
         <div class="card-body">
             <div class="table-responsive">
@@ -26,7 +33,7 @@
                             <th>Product</th>
                             <th>SKU</th>
                             <th>Category</th>
-                            <th>Current Stock</th>
+                            <th>Stock</th>
                             <th>Unit</th>
                             <th>Status</th>
                         </tr>
@@ -104,7 +111,7 @@
                             <th>Product</th>
                             <th>SKU</th>
                             <th>Category</th>
-                            <th>Current Stock</th>
+                            <th>Stock</th>
                             <th>Unit</th>
                             <th>Status</th>
                         </tr>
@@ -141,8 +148,10 @@
                         <tr>
                             <th>Date</th>
                             <th>Product</th>
-                            <th>Type</th>
-                            <th>Quantity</th>
+                            <th>Stock</th>
+                            <th>In</th>
+                            <th>Out</th>
+                            <th>Balance</th>
                             <th>Reason</th>
                             <th>User</th>
                         </tr>
@@ -153,12 +162,22 @@
                         <tr>
                             <td>{{ $movement->created_at->format('M d, Y H:i') }}</td>
                             <td>{{ $movement->product->name }}</td>
+                            <td>{{ $movement->opening_balance ?? 0 }}</td>
                             <td>
-                                <span class="badge bg-{{ $movement->type == 'in' ? 'success' : ($movement->type == 'out' ? 'danger' : 'warning') }}">
-                                    {{ ucfirst($movement->type) }}
-                                </span>
+                                @if($movement->type === 'out')
+                                    —
+                                @else
+                                    {{ $movement->quantity }}
+                                @endif
                             </td>
-                            <td>{{ $movement->quantity }}</td>
+                            <td>
+                                @if($movement->type === 'out')
+                                    {{ $movement->quantity }}
+                                @else
+                                    —
+                                @endif
+                            </td>
+                            <td>{{ $movement->running_balance ?? 0 }}</td>
                             <td>{{ $movement->reason ?? 'N/A' }}</td>
                             <td>{{ $movement->user->name ?? 'N/A' }}</td>
                         </tr>
@@ -170,11 +189,16 @@
                         @endforelse
                     </tbody>
                 </table>
-                {{ $movements->links() }}
                 @endif
             </div>
         </div>
     </div>
+
+    @if(!isset($showBalance) || !$showBalance)
+    <div class="alert alert-info mt-2">
+        Ledger shows running balance per product based on recorded movements. If a product started with stock, record an initial “Stock In” to reflect it.
+    </div>
+    @endif
 </div>
 
 @if(auth()->user()->isAdmin())
@@ -232,6 +256,15 @@ document.getElementById('adjustForm').addEventListener('submit', function(e) {
     if (!productId) {
         e.preventDefault();
         alert('Please select a product');
+        return;
+    }
+    const selectedOption = document.querySelector('#product_id option:checked');
+    const currentStock = selectedOption ? parseInt(selectedOption.getAttribute('data-stock'), 10) : 0;
+    const type = document.getElementById('type').value;
+    const qty = parseInt(document.getElementById('quantity').value, 10);
+    if (type === 'out' && qty > currentStock) {
+        e.preventDefault();
+        alert('Cannot stock out more than available quantity.');
         return;
     }
     const form = this;
