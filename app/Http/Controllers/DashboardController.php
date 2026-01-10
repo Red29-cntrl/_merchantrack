@@ -31,13 +31,18 @@ class DashboardController extends Controller
         ];
 
         $recent_sales = Sale::with('user', 'items.product')
+            ->whereHas('user', function($q) {
+                $q->where('role', '!=', 'admin');
+            })
             ->latest()
             ->take(10)
             ->get();
 
         $low_stock_products = Product::with('category')
+            ->where('is_active', true)
             ->whereColumn('quantity', '<=', 'reorder_level')
-            ->take(10)
+            ->orderBy('quantity', 'asc')
+            ->orderBy('name', 'asc')
             ->get();
 
         $top_products = DB::table('sale_items')

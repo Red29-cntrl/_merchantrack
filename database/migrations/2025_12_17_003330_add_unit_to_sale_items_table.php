@@ -4,7 +4,7 @@ use Illuminate\Database\Migrations\Migration;
 use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Support\Facades\Schema;
 
-class AddSaleDateToSalesTable extends Migration
+class AddUnitToSaleItemsTable extends Migration
 {
     /**
      * Run the migrations.
@@ -13,10 +13,8 @@ class AddSaleDateToSalesTable extends Migration
      */
     public function up()
     {
-        Schema::table('sales', function (Blueprint $table) {
-            if (!Schema::hasColumn('sales', 'sale_date')) {
-                $table->date('sale_date')->nullable()->after('sale_number');
-            }
+        Schema::table('sale_items', function (Blueprint $table) {
+            $table->string('unit')->default('pcs')->after('quantity');
         });
     }
 
@@ -27,8 +25,8 @@ class AddSaleDateToSalesTable extends Migration
      */
     public function down()
     {
-        Schema::table('sales', function (Blueprint $table) {
-            //
+        Schema::table('sale_items', function (Blueprint $table) {
+            $table->dropColumn('unit');
         });
     }
 }

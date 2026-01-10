@@ -6,6 +6,20 @@
     <meta name="csrf-token" content="{{ csrf_token() }}">
     <title>@yield('title', 'Merchantrack - POS & Inventory System')</title>
     
+    <!-- PWA Meta Tags -->
+    <meta name="theme-color" content="#852E4E">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <meta name="apple-mobile-web-app-title" content="Merchantrack">
+    <meta name="description" content="Point of Sale and Inventory Management System with Consumer Demand Forecasting">
+    
+    <!-- PWA Manifest -->
+    <link rel="manifest" href="{{ asset('manifest.json') }}">
+    
+    <!-- Favicon and Icons -->
+    <link rel="icon" href="{{ asset('favicon.ico') }}">
+    <link rel="apple-touch-icon" href="{{ asset('favicon.ico') }}">
+    
     <!-- Bootstrap CSS -->
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
     <!-- Font Awesome -->
@@ -35,14 +49,14 @@
             box-shadow: 2px 0 10px rgba(0,0,0,0.1);
         }
         .sidebar .logo {
-            padding: 20px;
-            text-align: center;
+            padding: 12px 20px;
+            text-align: left;
             border-bottom: 1px solid rgba(255,255,255,0.2);
-            margin-bottom: 20px;
+            margin: 5px 10px 20px 10px;
         }
-        .sidebar .logo h4 {
-            margin: 0;
-            font-weight: 700;
+        .sidebar .logo img {
+            max-width: 180px;
+            height: auto;
         }
         .sidebar .nav-link {
             color: rgba(255,255,255,0.8);
@@ -71,24 +85,27 @@
             margin-bottom: 20px;
         }
         .card-header {
-            background-color: #852E4E;
+            background-color: #852E4E !important;
             color: white;
             border-bottom: 1px solid #DC586D;
+        }
+        .card-header.bg-primary {
+            background-color: #852E4E !important;
         }
         .stat-card {
             background: #852E4E;
             color: white;
         }
         .stat-card.success {
-            background: #A33757;
+            background: #852E4E;
             color: white;
         }
         .stat-card.warning {
-            background: #FB9590;
+            background: #852E4E;
             color: white;
         }
         .stat-card.info {
-            background: #DC586D;
+            background: #852E4E;
             color: white;
         }
         .btn-primary {
@@ -110,13 +127,13 @@
             border-color: #DC586D;
         }
         .btn-warning {
-            background-color: #FB9590;
-            border-color: #DC586D;
-            color: #4C1D3D;
+            background-color: #852E4E;
+            border-color: #852E4E;
+            color: #ffffff;
         }
         .btn-warning:hover {
-            background-color: #DC586D;
-            border-color: #DC586D;
+            background-color: #4C1D3D;
+            border-color: #4C1D3D;
         }
         .btn-danger {
             background-color: #A33757;
@@ -128,13 +145,13 @@
             border-color: #852E4E;
         }
         .btn-info {
-            background-color: #DC586D;
-            border-color: #DC586D;
+            background-color: #852E4E;
+            border-color: #852E4E;
             color: #ffffff;
         }
         .btn-info:hover {
-            background-color: #A33757;
-            border-color: #A33757;
+            background-color: #4C1D3D;
+            border-color: #4C1D3D;
         }
         .btn-success {
             background-color: #A33757;
@@ -153,18 +170,23 @@
             color: #ffffff;
         }
         .badge.bg-success {
-            background-color: #A33757 !important;
+            background-color: #852E4E !important;
             color: #ffffff;
         }
         .badge.bg-warning {
-            background-color: #FB9590 !important;
-            color: #4C1D3D;
-            border: 1px solid #DC586D;
+            background-color: #852E4E !important;
+            color: #ffffff;
+            border: 1px solid #852E4E;
         }
         .badge.bg-info {
-            background-color: #DC586D !important;
+            background-color: #852E4E !important;
             color: #ffffff;
-            border: 1px solid #DC586D;
+            border: 1px solid #852E4E;
+        }
+        .badge.bg-danger {
+            background-color: #852E4E !important;
+            color: #ffffff;
+            border: 1px solid #852E4E;
         }
         .badge.bg-secondary {
             background-color: #FFBB94 !important;
@@ -201,6 +223,20 @@
             color: #4C1D3D;
             border-color: #DC586D;
         }
+        .pagination .page-link {
+            color: #852E4E;
+            border-color: #DC586D;
+        }
+        .pagination .page-link:hover {
+            color: #ffffff;
+            background-color: #852E4E;
+            border-color: #852E4E;
+        }
+        .pagination .page-item.active .page-link {
+            background-color: #852E4E;
+            border-color: #852E4E;
+            color: #ffffff;
+        }
     </style>
     @yield('styles')
 </head>
@@ -208,7 +244,7 @@
     @auth
     <div class="sidebar">
         <div class="logo">
-            <h4>Merchantrack</h4>
+            <h4 class="text-white mb-0">Merchantrack</h4>
         </div>
         <nav class="nav flex-column">
             <a class="nav-link {{ request()->routeIs('dashboard') ? 'active' : '' }}" href="{{ route('dashboard') }}">
@@ -308,6 +344,16 @@
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
     <!-- jQuery -->
     <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
+    
+    <!-- Disable Service Worker / Offline caching to prevent 419 issues -->
+    <script>
+        if ('serviceWorker' in navigator) {
+            navigator.serviceWorker.getRegistrations().then((registrations) => {
+                registrations.forEach((registration) => registration.unregister());
+            });
+        }
+    </script>
+    
     @yield('scripts')
 </body>
 </html>

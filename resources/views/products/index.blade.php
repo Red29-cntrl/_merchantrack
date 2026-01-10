@@ -38,7 +38,16 @@
                     </div>
                 </div>
                 <div class="col-md-3">
-                    <button type="submit" class="btn btn-primary w-100">Filter</button>
+                    <div class="d-flex gap-2">
+                        <button type="submit" class="btn btn-primary flex-grow-1">
+                            <i class="fas fa-filter me-1"></i>Filter
+                        </button>
+                        @if(request('search') || request('category') || request('low_stock'))
+                        <a href="{{ route('products.index') }}" class="btn btn-outline-secondary" title="Clear Filters">
+                            <i class="fas fa-times"></i>
+                        </a>
+                        @endif
+                    </div>
                 </div>
             </form>
         </div>

@@ -27,20 +27,23 @@ class ProductController extends Controller
     {
         $query = Product::with('category');
 
-        if ($request->has('search')) {
-            $query->where('name', 'like', '%' . $request->search . '%')
-                  ->orWhere('sku', 'like', '%' . $request->search . '%');
+        if ($request->filled('search')) {
+            $search = $request->search;
+            $query->where(function($q) use ($search) {
+                $q->where('name', 'like', '%' . $search . '%')
+                  ->orWhere('sku', 'like', '%' . $search . '%');
+            });
         }
 
-        if ($request->has('category')) {
+        if ($request->filled('category')) {
             $query->where('category_id', $request->category);
         }
 
-        if ($request->has('low_stock')) {
+        if ($request->filled('low_stock')) {
             $query->whereColumn('quantity', '<=', 'reorder_level');
         }
 
-        $products = $query->latest()->paginate(15);
+        $products = $query->latest()->paginate(15)->appends($request->query());
         $categories = Category::all();
         return view('products.index', compact('products', 'categories'));
     }

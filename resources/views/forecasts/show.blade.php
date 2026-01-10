@@ -22,7 +22,7 @@
                 <div class="col-md-6">
                     <p><strong>Confidence Level:</strong> {{ number_format($forecast->confidence_level, 1) }}%</p>
                     <p><strong>Method:</strong> {{ $forecast->method }}</p>
-                    <p><strong>Generated:</strong> {{ $forecast->created_at->format('M d, Y H:i') }}</p>
+                    <p><strong>Generated:</strong> {{ $forecast->created_at->setTimezone('Asia/Manila')->format('M d, Y h:i:s A') }}</p>
                 </div>
             </div>
 

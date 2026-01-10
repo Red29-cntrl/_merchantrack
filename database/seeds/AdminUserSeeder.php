@@ -11,11 +11,13 @@ class AdminUserSeeder extends Seeder
      */
     public function run()
     {
-        \App\User::create([
-            'name' => 'Admin',
-            'email' => 'admin@alnes.com',
-            'password' => \Hash::make('password'),
-            'role' => 'admin',
-        ]);
+        \App\User::firstOrCreate(
+            ['email' => 'admin@alnes.com'],
+            [
+                'name' => 'AL-Nes',
+                'password' => \Hash::make('password'),
+                'role' => 'admin',
+            ]
+        );
     }
 }

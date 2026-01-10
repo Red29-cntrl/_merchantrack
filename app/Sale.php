@@ -8,7 +8,7 @@ class Sale extends Model
 {
     protected $fillable = [
         'sale_number', 'user_id', 'subtotal', 'tax', 'discount',
-        'total', 'payment_method', 'notes'
+        'total', 'payment_method', 'notes', 'sale_date'
     ];
 
     protected $casts = [

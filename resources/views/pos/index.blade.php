@@ -33,9 +33,27 @@
         opacity: 0.5;
         cursor: not-allowed;
     }
+    .cart-item .quantity-input,
+    .cart-item .unit-select {
+        width: 80px;
+        padding: 6px;
+        font-size: 14px;
+        border: 1px solid #ddd;
+        border-radius: 4px;
+    }
+    .cart-item .unit-select {
+        width: 100px;
+    }
     .cart-item {
         border-bottom: 1px solid #eee;
-        padding: 10px 0;
+        padding: 12px 0;
+    }
+    .cart-item strong {
+        font-size: 16px;
+    }
+    .cart-item label {
+        font-size: 14px;
+        font-weight: 500;
     }
     .cart-summary {
         background: #f8f9fa;
@@ -53,21 +71,26 @@
         <div>
             <div class="card mb-3">
                 <div class="card-body">
-                    <div class="mb-3">
-                        <label for="barcode-scanner" class="form-label">
-                            <i class="fas fa-barcode me-2"></i>Scan Barcode or Search
-                        </label>
-                        <input type="text" id="barcode-scanner" class="form-control" 
-                               placeholder="Scan barcode or search by name/SKU..." autofocus>
-                        <small class="text-muted">Use camera to scan barcode or type to search</small>
+                    <div class="row g-3">
+                        <div class="col-md-8">
+                            <label for="product-search" class="form-label">
+                                <i class="fas fa-search me-2"></i>Search Product
+                            </label>
+                            <input type="text" id="product-search" class="form-control" 
+                                   placeholder="Search by product name or SKU..." autofocus>
+                        </div>
+                        <div class="col-md-4">
+                            <label for="category-filter" class="form-label">
+                                <i class="fas fa-filter me-2"></i>Filter by Category
+                            </label>
+                            <select id="category-filter" class="form-select">
+                                <option value="">All Categories</option>
+                                @foreach($categories as $category)
+                                <option value="{{ $category->id }}">{{ $category->name }}</option>
+                                @endforeach
+                            </select>
+                        </div>
                     </div>
-                    <div id="scanner-container" class="mb-3" style="display: none;">
-                        <video id="video" width="100%" height="200" style="border: 1px solid #ddd; border-radius: 4px;"></video>
-                        <button type="button" class="btn btn-sm btn-secondary mt-2" id="stop-scanner">Stop Camera</button>
-                    </div>
-                    <button type="button" class="btn btn-sm btn-primary" id="start-scanner">
-                        <i class="fas fa-camera me-2"></i>Start Camera Scanner
-                    </button>
                 </div>
             </div>
             <div class="card">
@@ -80,12 +103,15 @@
                         <div class="product-card {{ $product->quantity <= 0 ? 'out-of-stock' : '' }}" 
                              data-product-id="{{ $product->id }}"
                              data-product-name="{{ $product->name }}"
+                             data-product-sku="{{ $product->sku }}"
                              data-product-price="{{ $product->price }}"
-                             data-product-stock="{{ $product->quantity }}">
+                             data-product-stock="{{ $product->quantity }}"
+                             data-product-unit="{{ $product->unit ?? 'pcs' }}"
+                             data-category-id="{{ $product->category_id ?? '' }}">
                             <strong>{{ $product->name }}</strong><br>
                             <small class="text-muted">{{ $product->sku }}</small><br>
                             <span class="badge bg-primary">₱{{ number_format($product->price, 2) }}</span><br>
-                            <small>Stock: {{ $product->quantity }}</small>
+                            <small>Stock: {{ $product->quantity }} {{ ucfirst($product->unit ?? 'pcs') }}</small>
                         </div>
                         @endforeach
                     </div>
@@ -119,13 +145,6 @@
                             <strong>Total:</strong>
                             <strong id="total">₱0.00</strong>
                         </div>
-                        <div class="mb-3">
-                            <label class="form-label">Payment Method</label>
-                            <select class="form-select" id="payment-method" disabled>
-                                <option value="cash" selected>Cash Only</option>
-                            </select>
-                            <small class="text-muted">Only cash payments are accepted</small>
-                        </div>
                         <button class="btn btn-success w-100" id="process-sale">
                             <i class="fas fa-check me-2"></i>Process Sale
                         </button>
@@ -135,139 +154,146 @@
         </div>
     </div>
 </div>
+
+<!-- Success Modal with Receipt -->
+<div class="modal fade" id="successModal" tabindex="-1" aria-labelledby="successModalLabel" aria-hidden="true">
+    <div class="modal-dialog modal-lg">
+        <div class="modal-content">
+            <div class="modal-header bg-success text-white">
+                <h5 class="modal-title" id="successModalLabel">
+                    <i class="fas fa-check-circle me-2"></i>Sale Processed Successfully
+                </h5>
+                <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body" id="receipt-modal-body">
+                <!-- Receipt content will be inserted here -->
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+                <button type="button" class="btn btn-primary" onclick="printReceipt()">
+                    <i class="fas fa-print me-2"></i>Print Receipt
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<style>
+/* Receipt styling - A5 size (148mm x 210mm) Portrait, Monospaced Font */
+.receipt-content {
+    font-family: 'Courier New', Courier, monospace;
+    width: 148mm;
+    min-height: 210mm;
+    padding: 8mm;
+    margin: 0 auto;
+    background: white;
+    font-size: 10pt;
+    line-height: 1.3;
+    color: #000;
+}
+
+@media print {
+    @page {
+        size: A5 portrait;
+        margin: 0;
+    }
+    body * {
+        visibility: hidden;
+    }
+    .receipt-content, .receipt-content * {
+        visibility: visible;
+    }
+    .receipt-content {
+        position: absolute;
+        left: 0;
+        top: 0;
+        width: 148mm;
+        min-height: 210mm;
+        padding: 8mm;
+        margin: 0;
+        font-family: 'Courier New', Courier, monospace;
+        font-size: 10pt;
+        page-break-after: always;
+    }
+    .receipt-content table {
+        width: 100%;
+        margin-bottom: 8mm;
+        font-size: 9pt;
+        border-collapse: collapse;
+        font-family: 'Courier New', Courier, monospace;
+    }
+    .receipt-content table th,
+    .receipt-content table td {
+        padding: 2mm 1mm;
+        font-size: 9pt;
+        border-bottom: 1px solid #000;
+        font-family: 'Courier New', Courier, monospace;
+    }
+    .receipt-content table th {
+        font-weight: bold;
+        text-align: left;
+    }
+    .receipt-content h3 {
+        font-size: 14pt;
+        margin-bottom: 4mm;
+        margin-top: 0;
+        font-family: 'Courier New', Courier, monospace;
+        font-weight: bold;
+    }
+    .receipt-content hr {
+        margin: 4mm 0;
+        border: none;
+        border-top: 1px solid #000;
+    }
+}
+.receipt-content {
+    font-size: 14px;
+    max-width: 300px;
+    margin: 0 auto;
+    padding: 20px;
+}
+</style>
 @endsection
 
 @section('scripts')
-<script src="https://cdn.jsdelivr.net/npm/quagga@0.12.1/dist/quagga.min.js"></script>
 <script>
 let cart = [];
 const products = @json($products);
-let scannerActive = false;
-let stream = null;
 
-// Barcode scanner setup
-$('#start-scanner').on('click', function() {
-    if (scannerActive) return;
+// Product search functionality
+$('#product-search').on('input', function() {
+    filterProducts();
+});
+
+// Category filter functionality
+$('#category-filter').on('change', function() {
+    filterProducts();
+});
+
+function filterProducts() {
+    const search = $('#product-search').val().toLowerCase();
+    const categoryId = $('#category-filter').val();
     
-    $('#scanner-container').show();
-    $('#start-scanner').prop('disabled', true);
-    
-    navigator.mediaDevices.getUserMedia({ 
-        video: { 
-            facingMode: 'environment' // Use back camera on mobile
-        } 
-    }).then(function(mediaStream) {
-        stream = mediaStream;
-        const video = document.getElementById('video');
-        video.srcObject = stream;
-        video.play();
-        scannerActive = true;
-        
-        // Initialize QuaggaJS for barcode scanning
-        Quagga.init({
-            inputStream: {
-                name: "Live",
-                type: "LiveStream",
-                target: video,
-                constraints: {
-                    width: 640,
-                    height: 480,
-                    facingMode: "environment"
-                }
-            },
-            decoder: {
-                readers: ["code_128_reader", "ean_reader", "ean_8_reader", "code_39_reader", "code_39_vin_reader", "codabar_reader", "upc_reader", "upc_e_reader", "i2of5_reader"]
-            }
-        }, function(err) {
-            if (err) {
-                console.error('QuaggaJS initialization error:', err);
-                alert('Camera scanner initialization failed. Please use manual search.');
-                stopScanner();
-                return;
-            }
-            Quagga.start();
-        });
-        
-        Quagga.onDetected(function(result) {
-            const code = result.codeResult.code;
-            $('#barcode-scanner').val(code);
-            addProductByBarcode(code);
-            // Stop scanner after successful scan
-            setTimeout(() => {
-                stopScanner();
-            }, 1000);
-        });
-    }).catch(function(err) {
-        console.error('Camera access error:', err);
-        alert('Camera access denied. Please use manual search.');
-        stopScanner();
-    });
-});
-
-$('#stop-scanner').on('click', function() {
-    stopScanner();
-});
-
-function stopScanner() {
-    if (stream) {
-        stream.getTracks().forEach(track => track.stop());
-        stream = null;
-    }
-    if (scannerActive) {
-        Quagga.stop();
-        scannerActive = false;
-    }
-    $('#scanner-container').hide();
-    $('#start-scanner').prop('disabled', false);
-}
-
-// Barcode scanner input
-$('#barcode-scanner').on('input', function() {
-    const search = $(this).val().toLowerCase();
-    if (search.length > 0) {
-        searchProducts(search);
-    } else {
-        $('.product-card').show();
-    }
-});
-
-function addProductByBarcode(barcode) {
-    const product = products.find(p => p.sku.toLowerCase() === barcode.toLowerCase());
-    if (product) {
-        if (product.quantity <= 0) {
-            alert('Product is out of stock');
-            return;
-        }
-        
-        const existingItem = cart.find(item => item.product_id == product.id);
-        if (existingItem) {
-            if (existingItem.quantity < product.quantity) {
-                existingItem.quantity++;
-            } else {
-                alert('Insufficient stock');
-                return;
-            }
-        } else {
-            cart.push({
-                product_id: product.id,
-                product_name: product.name,
-                unit_price: parseFloat(product.price),
-                quantity: 1
-            });
-        }
-        
-        updateCart();
-        $('#barcode-scanner').val('');
-    } else {
-        alert('Product not found with barcode: ' + barcode);
-    }
-}
-
-function searchProducts(search) {
     $('.product-card').each(function() {
         const name = $(this).data('product-name').toLowerCase();
-        const sku = $(this).find('small').text().toLowerCase();
-        if (name.includes(search) || sku.includes(search)) {
+        const sku = $(this).data('product-sku').toLowerCase();
+        const productCategoryId = $(this).data('category-id') || '';
+        
+        let matchesSearch = true;
+        let matchesCategory = true;
+        
+        // Check search filter
+        if (search.length > 0) {
+            matchesSearch = name.includes(search) || sku.includes(search);
+        }
+        
+        // Check category filter
+        if (categoryId && categoryId !== '') {
+            matchesCategory = productCategoryId == categoryId;
+        }
+        
+        // Show/hide product card
+        if (matchesSearch && matchesCategory) {
             $(this).show();
         } else {
             $(this).hide();
@@ -275,29 +301,45 @@ function searchProducts(search) {
     });
 }
 
-// Add product to cart
+// Available unit options
+const unitOptions = ['pcs', 'box', 'pack', 'set', 'bag', 'kg', 'g', 'lb', 'liter', 'ml', 'meter', 'cm'];
+
+// Add product to cart on product card click
 $('.product-card').on('click', function() {
     if ($(this).hasClass('out-of-stock')) return;
     
     const productId = $(this).data('product-id');
     const product = products.find(p => p.id == productId);
     
-    if (product.quantity <= 0) return;
+    if (!product || product.quantity <= 0) {
+        alert('Product is out of stock');
+        return;
+    }
     
+    // Get unit from product data or fallback to default
+    const productUnit = (product.unit || $(this).data('product-unit') || 'pcs').toLowerCase();
+    
+    // Check if product already exists in cart
     const existingItem = cart.find(item => item.product_id == productId);
     if (existingItem) {
-        if (existingItem.quantity < product.quantity) {
-            existingItem.quantity++;
-        } else {
-            alert('Insufficient stock');
+        // If exists, just increment quantity by 1
+        const newQuantity = existingItem.quantity + 1;
+        // Update max_stock in case stock changed
+        existingItem.max_stock = product.quantity;
+        if (newQuantity > product.quantity) {
+            alert('Insufficient stock. Available: ' + product.quantity);
             return;
         }
+        existingItem.quantity = newQuantity;
     } else {
+        // Add new item to cart with quantity 1
         cart.push({
             product_id: productId,
             product_name: product.name,
+            product_unit: productUnit,
             unit_price: parseFloat(product.price),
-            quantity: 1
+            quantity: 1,
+            max_stock: product.quantity
         });
     }
     
@@ -307,24 +349,85 @@ $('.product-card').on('click', function() {
 function updateCart() {
     const cartHtml = cart.length === 0 
         ? '<p class="text-muted text-center">No items in cart</p>'
-        : cart.map((item, index) => `
+        : cart.map((item, index) => {
+            const product = products.find(p => p.id == item.product_id);
+            // Use current stock from products array, fallback to stored max_stock
+            const maxStock = product ? product.quantity : (item.max_stock || 999);
+            // Update max_stock in cart item to keep it in sync
+            if (product) {
+                cart[index].max_stock = product.quantity;
+            }
+            const unitOptionsHtml = unitOptions.map(unit => 
+                `<option value="${unit}" ${item.product_unit === unit ? 'selected' : ''}>${unit.charAt(0).toUpperCase() + unit.slice(1)}</option>`
+            ).join('');
+            
+            return `
             <div class="cart-item">
+                <div class="mb-2">
+                    <strong style="font-size: 16px;">${item.product_name}</strong>
+                </div>
+                <div class="d-flex align-items-center gap-2 mb-2">
+                    <label class="mb-0" style="font-size: 14px; font-weight: 500;">Qty:</label>
+                    <input type="number" 
+                           class="quantity-input" 
+                           min="1" 
+                           max="${maxStock}" 
+                           value="${item.quantity}" 
+                           data-cart-index="${index}"
+                           onchange="updateCartQuantity(${index}, this.value)"
+                           style="font-size: 14px;">
+                    <label class="mb-0" style="font-size: 14px; font-weight: 500;">Unit:</label>
+                    <select class="unit-select" 
+                            data-cart-index="${index}"
+                            onchange="updateCartUnit(${index}, this.value)"
+                            style="font-size: 14px;">
+                        ${unitOptionsHtml}
+                    </select>
+                </div>
                 <div class="d-flex justify-content-between align-items-center">
-                    <div>
-                        <strong>${item.product_name}</strong><br>
-                        <small>₱${item.unit_price.toFixed(2)} x ${item.quantity}</small>
-                    </div>
-                    <div>
+                    <span style="font-size: 15px; font-weight: 600;">₱${item.unit_price.toFixed(2)} × ${item.quantity} = ₱${(item.unit_price * item.quantity).toFixed(2)}</span>
                         <button class="btn btn-sm btn-danger" onclick="removeFromCart(${index})">
                             <i class="fas fa-trash"></i>
                         </button>
                     </div>
                 </div>
-            </div>
-        `).join('');
+        `;
+        }).join('');
     
     $('#cart-items').html(cartHtml);
     calculateTotal();
+}
+
+function updateCartQuantity(index, newQuantity) {
+    const quantity = parseInt(newQuantity) || 1;
+    const item = cart[index];
+    
+    if (!item) return;
+    
+    const product = products.find(p => p.id == item.product_id);
+    const maxStock = product ? product.quantity : (item.max_stock || 999);
+    
+    if (quantity <= 0) {
+        alert('Quantity must be at least 1');
+        updateCart();
+        return;
+    }
+    
+    if (quantity > maxStock) {
+        alert('Insufficient stock. Available: ' + maxStock);
+        cart[index].quantity = maxStock;
+        updateCart();
+        return;
+    }
+    
+    cart[index].quantity = quantity;
+    updateCart();
+}
+
+function updateCartUnit(index, newUnit) {
+    if (!cart[index]) return;
+    cart[index].product_unit = newUnit.toLowerCase();
+    updateCart();
 }
 
 function removeFromCart(index) {
@@ -345,7 +448,184 @@ function calculateTotal() {
 
 $('#tax-rate, #discount').on('input', calculateTotal);
 
-$('#process-sale').on('click', function() {
+// Offline Storage using IndexedDB
+const DB_NAME = 'merchantrack_offline';
+const DB_VERSION = 1;
+const STORE_NAME = 'pending_sales';
+
+let db = null;
+
+// Initialize IndexedDB
+function initDB() {
+    return new Promise((resolve, reject) => {
+        const request = indexedDB.open(DB_NAME, DB_VERSION);
+        
+        request.onerror = () => reject(request.error);
+        request.onsuccess = () => {
+            db = request.result;
+            resolve(db);
+        };
+        
+        request.onupgradeneeded = (event) => {
+            const db = event.target.result;
+            if (!db.objectStoreNames.contains(STORE_NAME)) {
+                const store = db.createObjectStore(STORE_NAME, { keyPath: 'id', autoIncrement: true });
+                store.createIndex('timestamp', 'timestamp', { unique: false });
+            }
+        };
+    });
+}
+
+// Save sale to IndexedDB (offline storage)
+async function saveSaleOffline(saleData) {
+    if (!db) await initDB();
+    
+    return new Promise((resolve, reject) => {
+        const transaction = db.transaction([STORE_NAME], 'readwrite');
+        const store = transaction.objectStore(STORE_NAME);
+        
+        const saleRecord = {
+            ...saleData,
+            timestamp: new Date().toISOString(),
+            synced: false
+        };
+        
+        const request = store.add(saleRecord);
+        request.onsuccess = () => resolve(request.result);
+        request.onerror = () => reject(request.error);
+    });
+}
+
+// Get pending sales from IndexedDB
+async function getPendingSales() {
+    if (!db) await initDB();
+    
+    return new Promise((resolve, reject) => {
+        const transaction = db.transaction([STORE_NAME], 'readonly');
+        const store = transaction.objectStore(STORE_NAME);
+        const index = store.index('timestamp');
+        const request = index.getAll();
+        
+        request.onsuccess = () => resolve(request.result || []);
+        request.onerror = () => reject(request.error);
+    });
+}
+
+// Remove synced sale from IndexedDB
+async function removePendingSale(id) {
+    if (!db) await initDB();
+    
+    return new Promise((resolve, reject) => {
+        const transaction = db.transaction([STORE_NAME], 'readwrite');
+        const store = transaction.objectStore(STORE_NAME);
+        const request = store.delete(id);
+        
+        request.onsuccess = () => resolve();
+        request.onerror = () => reject(request.error);
+    });
+}
+
+// Sync pending sales when online
+async function syncPendingSales() {
+    if (!navigator.onLine) return;
+    
+    try {
+        const pendingSales = await getPendingSales();
+        if (pendingSales.length === 0) return;
+        
+        console.log(`Syncing ${pendingSales.length} pending sales...`);
+        
+        for (const sale of pendingSales) {
+            try {
+                // Remove product_name before syncing (backend expects only product_id)
+                const syncData = {
+                    items: sale.items.map(item => ({
+                        product_id: item.product_id,
+                        quantity: item.quantity,
+                        unit: item.unit,
+                        unit_price: item.unit_price,
+                        subtotal: item.subtotal
+                    })),
+                    subtotal: sale.subtotal,
+                    tax: sale.tax,
+                    discount: sale.discount,
+                    total: sale.total,
+                    payment_method: sale.payment_method
+                };
+                
+                const response = await fetch('{{ route("pos.processSale") }}', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'X-CSRF-TOKEN': $('meta[name="csrf-token"]').attr('content')
+                    },
+                    body: JSON.stringify(syncData)
+                });
+                
+                if (response.ok) {
+                    const result = await response.json();
+                    if (result.success) {
+                        await removePendingSale(sale.id);
+                        console.log('Synced sale:', sale.id);
+                    }
+                }
+            } catch (error) {
+                console.error('Error syncing sale:', error);
+            }
+        }
+        
+        // Show notification if sales were synced
+        if (pendingSales.length > 0) {
+            showSyncNotification(pendingSales.length);
+        }
+    } catch (error) {
+        console.error('Error in syncPendingSales:', error);
+    }
+}
+
+// Show sync notification
+function showSyncNotification(count) {
+    const notification = $('<div class="alert alert-success alert-dismissible fade show" role="alert" style="position: fixed; top: 80px; right: 20px; z-index: 10000; min-width: 300px;">')
+        .html(`<i class="fas fa-sync-alt me-2"></i>Synced ${count} pending sale(s) successfully!`)
+        .append('<button type="button" class="btn-close" data-bs-dismiss="alert"></button>');
+    
+    $('body').append(notification);
+    
+    setTimeout(() => {
+        notification.alert('close');
+    }, 5000);
+}
+
+// Check online status and show warning
+function checkOnlineStatus() {
+    if (!navigator.onLine) {
+        const warning = $('<div class="alert alert-warning mb-3" role="alert">')
+            .html('<i class="fas fa-exclamation-triangle me-2"></i><strong>Offline Mode:</strong> Sales will be saved locally and synced when connection is restored.');
+        $('#process-sale').before(warning);
+        $('#process-sale').html('<i class="fas fa-save me-2"></i>Save Sale (Offline)');
+    } else {
+        $('#process-sale').html('<i class="fas fa-check me-2"></i>Process Sale');
+        $('.alert-warning').remove();
+    }
+}
+
+// Initialize DB and check status on page load
+initDB().then(() => {
+    checkOnlineStatus();
+    syncPendingSales(); // Try to sync any pending sales
+    
+    // Listen for online/offline events
+    window.addEventListener('online', () => {
+        checkOnlineStatus();
+        syncPendingSales();
+    });
+    
+    window.addEventListener('offline', () => {
+        checkOnlineStatus();
+    });
+});
+
+$('#process-sale').on('click', async function() {
     if (cart.length === 0) {
         alert('Cart is empty');
         return;
@@ -361,6 +641,7 @@ $('#process-sale').on('click', function() {
         items: cart.map(item => ({
             product_id: item.product_id,
             quantity: item.quantity,
+            unit: item.product_unit || 'pcs',
             unit_price: item.unit_price,
             subtotal: item.unit_price * item.quantity
         })),
@@ -368,30 +649,249 @@ $('#process-sale').on('click', function() {
         tax: tax,
         discount: discount,
         total: total,
-        payment_method: $('#payment-method').val()
+        payment_method: 'cash'
     };
     
-    $.ajax({
-        url: '{{ route("pos.processSale") }}',
-        method: 'POST',
-        data: saleData,
-        headers: {
-            'X-CSRF-TOKEN': $('meta[name="csrf-token"]').attr('content')
-        },
-        success: function(response) {
-            if (response.success) {
-                alert('Sale processed successfully! Sale #: ' + response.sale_number);
-                cart = [];
-                updateCart();
-                window.location.href = '/sales/' + response.sale_id;
+    // Check if online
+    if (navigator.onLine) {
+        // Try to process sale online
+        $.ajax({
+            url: '{{ route("pos.processSale") }}',
+            method: 'POST',
+            data: saleData,
+            headers: {
+                'X-CSRF-TOKEN': $('meta[name="csrf-token"]').attr('content')
+            },
+            success: function(response) {
+                if (response.success) {
+                    // Show success modal with receipt
+                    showSuccessModal(response.sale, response.business);
+                    cart = [];
+                    updateCart();
+                }
+            },
+            error: async function(xhr) {
+                // If error, try to save offline
+                if (xhr.status === 0 || !navigator.onLine) {
+                    await handleOfflineSale(saleData);
+                } else {
+                    const error = xhr.responseJSON?.message || 'Error processing sale';
+                    alert(error);
+                }
             }
-        },
-        error: function(xhr) {
-            const error = xhr.responseJSON?.message || 'Error processing sale';
-            alert(error);
-        }
-    });
+        });
+    } else {
+        // Save offline
+        await handleOfflineSale(saleData);
+    }
 });
+
+// Handle offline sale
+async function handleOfflineSale(saleData) {
+    try {
+        // Add product names to items for receipt display
+        const saleDataWithNames = {
+            ...saleData,
+            items: saleData.items.map(item => ({
+                ...item,
+                product_name: products.find(p => p.id == item.product_id)?.name || 'Unknown Product'
+            }))
+        };
+        
+        const saleId = await saveSaleOffline(saleDataWithNames);
+        
+        // Generate a temporary receipt for offline sale
+        const tempSale = {
+            sale_number: 'OFFLINE-' + Date.now(),
+            date: new Date().toLocaleString(),
+            cashier: '{{ auth()->user()->name ?? "User" }}',
+            payment_method: saleData.payment_method,
+            items: saleDataWithNames.items,
+            subtotal: saleData.subtotal,
+            tax: saleData.tax,
+            discount: saleData.discount,
+            total: saleData.total
+        };
+        
+        showSuccessModal(tempSale);
+        
+        // Show offline notice
+        const offlineNotice = $('<div class="alert alert-info mt-2">')
+            .html('<i class="fas fa-info-circle me-2"></i>Sale saved offline. It will be synced automatically when connection is restored.');
+        $('#successModal .modal-body').append(offlineNotice);
+        
+        cart = [];
+        updateCart();
+    } catch (error) {
+        console.error('Error saving offline sale:', error);
+        alert('Error saving sale offline. Please try again.');
+    }
+}
+
+function showSuccessModal(sale, business) {
+    // Get business settings from parameter or use defaults - EXACTLY as shown on receipt
+    // Priority: business parameter from API > Blade template variables
+    const businessInfo = business || {
+        business_name: '{{ $businessSettings->business_name ?? "" }}',
+        receipt_type: '{{ $businessSettings->receipt_type ?? "SALES INVOICE" }}',
+        business_type: '{{ $businessSettings->business_type ?? "" }}',
+        address: '{{ $businessSettings->address ?? "" }}',
+        proprietor: '{{ $businessSettings->proprietor ?? "" }}',
+        vat_reg_tin: '{{ $businessSettings->vat_reg_tin ?? "" }}',
+        phone: '{{ $businessSettings->phone ?? "" }}',
+        receipt_footer_note: '{{ $businessSettings->receipt_footer_note ?? "" }}'
+    };
+    
+    // Debug: Check if business info is available
+    console.log('Business Info Received:', businessInfo);
+    console.log('Business Name:', businessInfo.business_name);
+    
+    // Extract receipt number (remove DR- prefix if present for display)
+    const receiptNo = sale.sale_number.replace('DR-', '').replace('SALE-', '');
+    const dateDisplay = sale.date_short || sale.date.split(' ').slice(0, 3).join(' ');
+    
+    // Build AL-NES style sales invoice HTML - A5 size, monospaced font, exact header format
+    // Always show header section even if some fields are empty
+    let receiptHtml = `
+        <div class="receipt-content" id="receipt-content">
+            <!-- Header - EXACTLY as shown on receipt -->
+            <div style="text-align: center; border-bottom: 2px solid #000; padding-bottom: 4mm; margin-bottom: 4mm;">
+                <h3 style="margin: 0 0 2mm 0; font-size: 14pt; font-weight: bold; text-transform: uppercase; letter-spacing: 0.5pt;">${(businessInfo.business_name && businessInfo.business_name.trim()) || 'MERCHANTRACK'}</h3>
+                ${(businessInfo.business_type && businessInfo.business_type.trim()) ? `<p style="margin: 1mm 0; font-size: 9pt; text-transform: uppercase; letter-spacing: 0.3pt;">${businessInfo.business_type}</p>` : ''}
+                ${(businessInfo.address && businessInfo.address.trim()) ? `<p style="margin: 1mm 0; font-size: 9pt;">${businessInfo.address}</p>` : ''}
+                ${(businessInfo.proprietor && businessInfo.proprietor.trim()) ? `<p style="margin: 1mm 0; font-size: 9pt;"><strong>Proprietor:</strong> ${businessInfo.proprietor}</p>` : ''}
+                ${(businessInfo.vat_reg_tin && businessInfo.vat_reg_tin.trim()) ? `<p style="margin: 1mm 0; font-size: 9pt;">VAT Reg. TIN: ${businessInfo.vat_reg_tin}</p>` : ''}
+                ${(businessInfo.phone && businessInfo.phone.trim()) ? `<p style="margin: 1mm 0; font-size: 9pt;">${businessInfo.phone}</p>` : ''}
+            </div>
+            
+            <!-- Sales Invoice Box - EXACTLY as shown -->
+            <div style="display: flex; justify-content: space-between; align-items: center; margin: 4mm 0; padding: 3mm; border: 1px solid #000; background: #f9f9f9;">
+                <div style="font-weight: bold; font-size: 10pt; letter-spacing: 0.5pt;">${(businessInfo.receipt_type && businessInfo.receipt_type.trim()) || 'SALES INVOICE'}</div>
+                <div style="font-weight: bold; font-size: 12pt; color: #d32f2f;">No.${receiptNo}</div>
+            </div>
+            
+            <!-- Receipt Details Section -->
+            <div style="margin: 4mm 0; font-size: 9pt; line-height: 1.6;">
+                <div><strong>Date:</strong> ${dateDisplay}</div>
+                ${sale.cashier ? `<div style="margin-top: 2mm;"><strong>Cashier:</strong> ${sale.cashier}</div>` : ''}
+                <div style="margin-top: 2mm;"><strong>Payment:</strong> ${sale.payment_method ? sale.payment_method.charAt(0).toUpperCase() + sale.payment_method.slice(1) : 'Cash'}</div>
+            </div>
+            
+            <hr style="margin: 4mm 0; border: none; border-top: 1px solid #000;">
+            
+            <!-- Items Table - QTY | UNIT | ARTICLES | AMOUNT -->
+            <table style="width: 100%; border-collapse: collapse; font-size: 9pt; margin-bottom: 4mm;">
+                <thead>
+                    <tr style="border-bottom: 1px solid #000;">
+                        <th style="text-align: left; padding: 2mm 1mm; font-weight: bold; width: 12%;">QTY.</th>
+                        <th style="text-align: left; padding: 2mm 1mm; font-weight: bold; width: 15%;">UNIT</th>
+                        <th style="text-align: left; padding: 2mm 1mm; font-weight: bold; width: 48%;">ARTICLES</th>
+                        <th style="text-align: right; padding: 2mm 1mm; font-weight: bold; width: 25%;">AMOUNT</th>
+                    </tr>
+                </thead>
+                <tbody>
+    `;
+    
+    // Only include items that exist - no guessing
+    if (sale.items && sale.items.length > 0) {
+        sale.items.forEach(item => {
+            // Standardize unit (PC, PCS, etc.)
+            const unit = item.unit ? item.unit.toUpperCase().replace(/S$/, '') : 'PC';
+            // Standardize product name - uppercase, no guessing
+            const productName = item.product_name ? item.product_name.toUpperCase().trim() : '';
+            // Ensure quantity is numeric
+            const quantity = parseInt(item.quantity) || 0;
+            // Ensure amount is numeric
+            const amount = parseFloat(item.subtotal) || 0;
+            
+            if (productName && quantity > 0) {
+                receiptHtml += `
+                    <tr style="border-bottom: 1px dotted #666;">
+                        <td style="padding: 2mm 1mm; text-align: left;">${quantity}</td>
+                        <td style="padding: 2mm 1mm; text-align: left;">${unit}</td>
+                        <td style="padding: 2mm 1mm; text-align: left;">${productName}</td>
+                        <td style="padding: 2mm 1mm; text-align: right;">₱${amount.toFixed(2)}</td>
+                    </tr>
+                `;
+            }
+        });
+    }
+    
+    receiptHtml += `
+                </tbody>
+                <tfoot>
+                    <tr style="border-top: 2px solid #000;">
+                        <td colspan="3" style="padding: 3mm 1mm; text-align: right; font-weight: bold; font-size: 10pt;">TOTAL:</td>
+                        <td style="padding: 3mm 1mm; text-align: right; font-weight: bold; font-size: 11pt;">₱${parseFloat(sale.total || 0).toFixed(2)}</td>
+                    </tr>
+                </tfoot>
+            </table>
+            
+            <hr style="margin: 4mm 0; border: none; border-top: 1px solid #000;">
+            
+            <!-- Footer - Only include if data exists -->
+            <div style="text-align: center; font-size: 8pt; margin-top: 6mm; padding-top: 4mm; border-top: 1px solid #ccc; line-height: 1.5;">
+                ${businessInfo.receipt_footer_note ? `<p style="margin: 2mm 0; font-style: italic;">${businessInfo.receipt_footer_note}</p>` : ''}
+                <p style="margin: 4mm 0 2mm 0;">Thank you for your purchase!</p>
+            </div>
+        </div>
+    `;
+    
+    // Set modal body content
+    $('#receipt-modal-body').html(receiptHtml);
+    
+    // Show modal
+    $('#successModal').modal('show');
+}
+
+function printReceipt() {
+    // Get receipt content
+    const receiptContent = document.getElementById('receipt-content').outerHTML;
+    const originalContent = document.body.innerHTML;
+    const originalTitle = document.title;
+    
+    // Create a clean print document with A5 size
+    const printWindow = window.open('', '_blank', 'width=148mm,height=210mm');
+    printWindow.document.write(`
+        <!DOCTYPE html>
+        <html>
+        <head>
+            <title>Sales Invoice</title>
+            <style>
+                @page {
+                    size: A5 portrait;
+                    margin: 0;
+                }
+                body {
+                    margin: 0;
+                    padding: 0;
+                    font-family: 'Courier New', Courier, monospace;
+                }
+                .receipt-content {
+                    width: 148mm;
+                    min-height: 210mm;
+                    padding: 8mm;
+                    margin: 0;
+                    font-family: 'Courier New', Courier, monospace;
+                    font-size: 10pt;
+                    line-height: 1.3;
+                    color: #000;
+                }
+            </style>
+        </head>
+        <body>
+            ${receiptContent}
+        </body>
+        </html>
+    `);
+    printWindow.document.close();
+    
+    // Wait for content to load, then print
+    setTimeout(() => {
+        printWindow.print();
+        printWindow.close();
+    }, 250);
+}
 </script>
 @endsection
 

@@ -4,7 +4,7 @@ use Illuminate\Database\Migrations\Migration;
 use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Support\Facades\Schema;
 
-class AddSaleDateToSalesTable extends Migration
+class AddReceiptTypeToBusinessSettingsTable extends Migration
 {
     /**
      * Run the migrations.
@@ -13,10 +13,8 @@ class AddSaleDateToSalesTable extends Migration
      */
     public function up()
     {
-        Schema::table('sales', function (Blueprint $table) {
-            if (!Schema::hasColumn('sales', 'sale_date')) {
-                $table->date('sale_date')->nullable()->after('sale_number');
-            }
+        Schema::table('business_settings', function (Blueprint $table) {
+            $table->string('receipt_type')->default('SALES INVOICE')->after('business_name');
         });
     }
 
@@ -27,8 +25,8 @@ class AddSaleDateToSalesTable extends Migration
      */
     public function down()
     {
-        Schema::table('sales', function (Blueprint $table) {
-            //
+        Schema::table('business_settings', function (Blueprint $table) {
+            $table->dropColumn('receipt_type');
         });
     }
 }

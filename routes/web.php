@@ -70,6 +70,7 @@ Route::middleware('auth')->group(function () {
         
         // Inventory Management (with in/out)
         Route::post('/inventory/adjust/{product}', [InventoryController::class, 'adjust'])->name('inventory.adjust');
+        Route::get('/inventory/monthly-summary', [InventoryController::class, 'monthlySummary'])->name('inventory.monthly-summary');
         
         // Demand Forecast
         Route::get('/forecasts', [DemandForecastController::class, 'index'])->name('forecasts.index');

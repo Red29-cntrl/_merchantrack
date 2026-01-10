@@ -11,7 +11,7 @@
             <div class="row mb-4">
                 <div class="col-md-6">
                     <p><strong>Sale Number:</strong> {{ $sale->sale_number }}</p>
-                    <p><strong>Date:</strong> {{ $sale->created_at->format('M d, Y H:i') }}</p>
+                    <p><strong>Date:</strong> {{ $sale->created_at->setTimezone('Asia/Manila')->format('M d, Y h:i:s A') }}</p>
                     <p><strong>Cashier:</strong> {{ $sale->user->name }}</p>
                 </div>
                 <div class="col-md-6">
@@ -28,6 +28,7 @@
                         <tr>
                             <th>Product</th>
                             <th>Quantity</th>
+                            <th>Unit</th>
                             <th>Unit Price</th>
                             <th>Subtotal</th>
                         </tr>
@@ -37,6 +38,7 @@
                         <tr>
                             <td>{{ $item->product->name }}</td>
                             <td>{{ $item->quantity }}</td>
+                            <td>{{ ucfirst($item->unit ?? $item->product->unit ?? 'pcs') }}</td>
                             <td>₱{{ number_format($item->unit_price, 2) }}</td>
                             <td>₱{{ number_format($item->subtotal, 2) }}</td>
                         </tr>
@@ -44,23 +46,23 @@
                     </tbody>
                     <tfoot>
                         <tr>
-                            <th colspan="3">Subtotal:</th>
+                            <th colspan="4">Subtotal:</th>
                             <th>₱{{ number_format($sale->subtotal, 2) }}</th>
                         </tr>
                         @if($sale->tax > 0)
                         <tr>
-                            <th colspan="3">Tax:</th>
+                            <th colspan="4">Tax:</th>
                             <th>₱{{ number_format($sale->tax, 2) }}</th>
                         </tr>
                         @endif
                         @if($sale->discount > 0)
                         <tr>
-                            <th colspan="3">Discount:</th>
+                            <th colspan="4">Discount:</th>
                             <th>₱{{ number_format($sale->discount, 2) }}</th>
                         </tr>
                         @endif
                         <tr>
-                            <th colspan="3">Total:</th>
+                            <th colspan="4">Total:</th>
                             <th>₱{{ number_format($sale->total, 2) }}</th>
                         </tr>
                     </tfoot>

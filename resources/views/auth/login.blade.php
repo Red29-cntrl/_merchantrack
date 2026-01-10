@@ -18,24 +18,52 @@
             align-items: center;
             justify-content: center;
             padding: 20px;
+            position: relative;
+            overflow: hidden;
+        }
+        body::before {
+            content: '';
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background-image: url('{{ asset('images/login_background.png') }}');
+            background-size: cover;
+            background-position: center;
+            background-repeat: no-repeat;
+            filter: blur(8px);
+            transform: scale(1.1);
+            z-index: -1;
+        }
+        body::after {
+            content: '';
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background-color: rgba(0, 0, 0, 0.3);
+            z-index: -1;
         }
         .login-card {
-            background: white;
+            background: rgba(255, 255, 255, 0.95);
             border: 2px solid #852E4E;
             border-radius: 8px;
             box-shadow: 0 4px 8px rgba(0,0,0,0.1);
             max-width: 450px;
             width: 100%;
+            position: relative;
+            z-index: 1;
         }
         .login-header {
             text-align: center;
             padding: 30px 20px 20px;
             border-bottom: 2px solid #852E4E;
         }
-        .login-header h2 {
-            color: #4C1D3D;
-            font-weight: 700;
-            margin-bottom: 10px;
+        .login-header .logo {
+            max-width: 200px;
+            height: auto;
         }
         .login-header p {
             color: #4C1D3D;
@@ -75,7 +103,7 @@
 <body>
     <div class="login-card">
         <div class="login-header">
-            <h2>Merchantrack</h2>
+            <img src="{{ asset('images/merchantrack-logo.png') }}" alt="MerchanTrack Logo" class="logo">
         </div>
         <div class="login-body">
             @if($errors->any())
