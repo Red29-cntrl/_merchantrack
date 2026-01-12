@@ -75,6 +75,16 @@
         </div>
     </div>
 
+    {{-- Line Graph --}}
+    @if($monthlySummary->count() > 0)
+    <div class="card mb-4 shadow-sm">
+        <div class="card-body p-4">
+            <h5 class="mb-3 fw-bold">Monthly Trends ({{ $selectedYear }})</h5>
+            <canvas id="monthlyChart" height="80"></canvas>
+        </div>
+    </div>
+    @endif
+
     <div class="card mb-4 shadow-sm">
         <div class="card-body p-4">
             <div class="mb-4">
@@ -135,5 +145,103 @@
         </div>
     </div>
 </div>
+
+@if($monthlySummary->count() > 0)
+<script src="https://cdn.jsdelivr.net/npm/chart.js@3.9.1/dist/chart.min.js"></script>
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+    const monthlyData = @json($monthlySummary->sortBy('month')->values());
+    
+    const months = monthlyData.map(item => {
+        const monthNames = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+        return monthNames[item.month - 1];
+    });
+    
+    const inData = monthlyData.map(item => item.total_in);
+    const outData = monthlyData.map(item => item.total_out);
+    const adjustmentData = monthlyData.map(item => item.total_adjustment);
+    const netData = monthlyData.map(item => item.net_change);
+    
+    const ctx = document.getElementById('monthlyChart');
+    if (ctx) {
+        new Chart(ctx.getContext('2d'), {
+            type: 'line',
+            data: {
+                labels: months,
+                datasets: [
+                    {
+                        label: 'Stock In',
+                        data: inData,
+                        borderColor: 'rgb(40, 167, 69)',
+                        backgroundColor: 'rgba(40, 167, 69, 0.1)',
+                        tension: 0.4,
+                        fill: false
+                    },
+                    {
+                        label: 'Stock Out',
+                        data: outData,
+                        borderColor: 'rgb(220, 53, 69)',
+                        backgroundColor: 'rgba(220, 53, 69, 0.1)',
+                        tension: 0.4,
+                        fill: false
+                    },
+                    {
+                        label: 'Adjustment',
+                        data: adjustmentData,
+                        borderColor: 'rgb(23, 162, 184)',
+                        backgroundColor: 'rgba(23, 162, 184, 0.1)',
+                        tension: 0.4,
+                        fill: false
+                    },
+                    {
+                        label: 'Net Change',
+                        data: netData,
+                        borderColor: 'rgb(133, 46, 78)',
+                        backgroundColor: 'rgba(133, 46, 78, 0.1)',
+                        tension: 0.4,
+                        fill: false,
+                        borderWidth: 2
+                    }
+                ]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: true,
+                plugins: {
+                    legend: {
+                        display: true,
+                        position: 'top',
+                    },
+                    tooltip: {
+                        mode: 'index',
+                        intersect: false,
+                        callbacks: {
+                            label: function(context) {
+                                return context.dataset.label + ': ' + context.parsed.y.toLocaleString();
+                            }
+                        }
+                    }
+                },
+                scales: {
+                    y: {
+                        beginAtZero: true,
+                        ticks: {
+                            callback: function(value) {
+                                return value.toLocaleString();
+                            }
+                        }
+                    }
+                },
+                interaction: {
+                    mode: 'nearest',
+                    axis: 'x',
+                    intersect: false
+                }
+            }
+        });
+    }
+});
+</script>
+@endif
 @endsection
 

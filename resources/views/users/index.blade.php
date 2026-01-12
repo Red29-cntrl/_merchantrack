@@ -34,7 +34,7 @@
                                     {{ ucfirst($user->role) }}
                                 </span>
                             </td>
-                            <td>{{ $user->created_at->format('M d, Y') }}</td>
+                            <td>{{ $user->created_at->setTimezone('Asia/Manila')->format('M d, Y') }}</td>
                             <td>
                                 <a href="{{ route('users.edit', $user) }}" class="btn btn-sm btn-warning">
                                     <i class="fas fa-edit"></i>

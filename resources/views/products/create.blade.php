@@ -81,7 +81,7 @@
                     <div class="col-md-4 mb-3">
                         <label for="reorder_level" class="form-label">Reorder Level</label>
                         <input type="number" class="form-control @error('reorder_level') is-invalid @enderror" 
-                               id="reorder_level" name="reorder_level" value="{{ old('reorder_level', 10) }}" required>
+                               id="reorder_level" name="reorder_level" value="{{ old('reorder_level', 20) }}" required>
                         @error('reorder_level')
                         <div class="invalid-feedback">{{ $message }}</div>
                         @enderror

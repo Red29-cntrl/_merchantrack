@@ -105,7 +105,7 @@ class ImportProductsFromCsv extends Command
                 'price' => $price,
                 'cost' => null,
                 'quantity' => 0,
-                'reorder_level' => 10,
+                'reorder_level' => 20,
                 'unit' => 'pcs',
                 'is_active' => true,
             ];

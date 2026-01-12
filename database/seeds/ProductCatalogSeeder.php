@@ -66,7 +66,7 @@ class ProductCatalogSeeder extends Seeder
                     'price' => (float) $price,
                     'cost' => null,
                     'quantity' => isset($data['quantity']) && $data['quantity'] !== '' ? (int) $data['quantity'] : 0,
-                    'reorder_level' => isset($data['reorder_level']) && $data['reorder_level'] !== '' ? (int) $data['reorder_level'] : 10,
+                    'reorder_level' => isset($data['reorder_level']) && $data['reorder_level'] !== '' ? (int) $data['reorder_level'] : 20,
                     'unit' => $data['unit'] ?? 'pcs',
                     'image' => $data['image'] ?? null,
                     'is_active' => true,

@@ -60,6 +60,86 @@
         padding: 15px;
         border-radius: 8px;
     }
+    /* Custom Alert Modal */
+    .custom-alert-modal {
+        display: none;
+        position: fixed;
+        z-index: 10000;
+        left: 0;
+        top: 0;
+        width: 100%;
+        height: 100%;
+        background-color: rgba(0, 0, 0, 0.5);
+        animation: fadeIn 0.3s;
+    }
+    .custom-alert-modal.show {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+    }
+    .custom-alert-content {
+        background-color: white;
+        border: 2px solid #852E4E;
+        border-radius: 12px;
+        padding: 0;
+        max-width: 500px;
+        width: 90%;
+        box-shadow: 0 4px 20px rgba(0, 0, 0, 0.3);
+        animation: slideDown 0.3s;
+    }
+    .custom-alert-header {
+        background-color: #852E4E;
+        color: white;
+        padding: 20px;
+        border-radius: 10px 10px 0 0;
+        display: flex;
+        align-items: center;
+        gap: 12px;
+    }
+    .custom-alert-header i {
+        font-size: 24px;
+    }
+    .custom-alert-body {
+        padding: 25px;
+        color: #4C1D3D;
+        font-size: 16px;
+        line-height: 1.6;
+    }
+    .custom-alert-footer {
+        padding: 15px 25px;
+        border-top: 1px solid #DC586D;
+        display: flex;
+        justify-content: flex-end;
+        background-color: #f8f9fa;
+        border-radius: 0 0 10px 10px;
+    }
+    .custom-alert-btn {
+        background-color: #852E4E;
+        color: white;
+        border: none;
+        padding: 10px 30px;
+        border-radius: 6px;
+        font-size: 16px;
+        cursor: pointer;
+        transition: all 0.3s;
+    }
+    .custom-alert-btn:hover {
+        background-color: #4C1D3D;
+    }
+    @keyframes fadeIn {
+        from { opacity: 0; }
+        to { opacity: 1; }
+    }
+    @keyframes slideDown {
+        from {
+            transform: translateY(-50px);
+            opacity: 0;
+        }
+        to {
+            transform: translateY(0);
+            opacity: 1;
+        }
+    }
 </style>
 @endsection
 
@@ -158,6 +238,22 @@
                     </div>
                 </div>
             </div>
+        </div>
+    </div>
+</div>
+
+<!-- Custom Alert Modal -->
+<div id="customAlertModal" class="custom-alert-modal">
+    <div class="custom-alert-content">
+        <div class="custom-alert-header">
+            <i id="alertIcon" class="fas fa-exclamation-triangle"></i>
+            <h5 class="mb-0" id="alertTitle">Alert</h5>
+        </div>
+        <div class="custom-alert-body">
+            <p id="alertMessage" class="mb-0"></p>
+        </div>
+        <div class="custom-alert-footer">
+            <button class="custom-alert-btn" onclick="closeCustomAlert()">OK</button>
         </div>
     </div>
 </div>
@@ -293,6 +389,43 @@ function handleQuantityInputChange(index, input) {
     updateCartQuantity(index, numericValue);
 }
 
+// Custom Alert Function
+function showCustomAlert(title, message, type = 'warning') {
+    const modal = document.getElementById('customAlertModal');
+    const icon = document.getElementById('alertIcon');
+    const titleEl = document.getElementById('alertTitle');
+    const messageEl = document.getElementById('alertMessage');
+    
+    // Set icon based on type
+    if (type === 'error' || type === 'danger') {
+        icon.className = 'fas fa-exclamation-circle';
+        icon.style.color = '#DC586D';
+    } else if (type === 'success') {
+        icon.className = 'fas fa-check-circle';
+        icon.style.color = '#A33757';
+    } else {
+        icon.className = 'fas fa-exclamation-triangle';
+        icon.style.color = '#FFBB94';
+    }
+    
+    titleEl.textContent = title;
+    messageEl.innerHTML = message;
+    modal.classList.add('show');
+}
+
+function closeCustomAlert() {
+    const modal = document.getElementById('customAlertModal');
+    modal.classList.remove('show');
+}
+
+// Close modal when clicking outside
+document.addEventListener('click', function(event) {
+    const modal = document.getElementById('customAlertModal');
+    if (event.target === modal) {
+        closeCustomAlert();
+    }
+});
+
 let cart = [];
 const products = @json($products);
 
@@ -348,7 +481,7 @@ $('.product-card').on('click', function() {
     const product = products.find(p => p.id == productId);
     
     if (!product || product.quantity <= 0) {
-        alert('Product is out of stock');
+        showCustomAlert('Out of Stock', `Product <strong>${product.name}</strong> (SKU: ${product.sku}) is currently out of stock.`, 'error');
         return;
     }
     
@@ -363,7 +496,7 @@ $('.product-card').on('click', function() {
         // Update max_stock in case stock changed
         existingItem.max_stock = product.quantity;
         if (newQuantity > product.quantity) {
-            alert('Insufficient stock. Available: ' + product.quantity);
+            showCustomAlert('Insufficient Stock', `Insufficient stock for <strong>${product.name}</strong> (SKU: ${product.sku}).<br>Available: <strong>${formatQuantity(product.quantity)}</strong> ${product.unit || 'pcs'}`, 'warning');
             return;
         }
         existingItem.quantity = newQuantity;
@@ -372,6 +505,7 @@ $('.product-card').on('click', function() {
         cart.push({
             product_id: productId,
             product_name: product.name,
+            product_sku: product.sku,
             product_unit: productUnit,
             unit_price: parseFloat(product.price),
             quantity: 1,
@@ -444,13 +578,16 @@ function updateCartQuantity(index, newQuantity) {
     const maxStock = product ? product.quantity : (item.max_stock || 999);
     
     if (quantity <= 0) {
-        alert('Quantity must be at least 1');
+        showCustomAlert('Invalid Quantity', 'Quantity must be at least 1.', 'warning');
         updateCart();
         return;
     }
     
     if (quantity > maxStock) {
-        alert('Insufficient stock. Available: ' + formatQuantity(maxStock));
+        const productName = product ? product.name : item.product_name;
+        const productSku = product ? product.sku : 'N/A';
+        const productUnit = product ? product.unit : 'pcs';
+        showCustomAlert('Insufficient Stock', `Insufficient stock for <strong>${productName}</strong> (SKU: ${productSku}).<br>Available: <strong>${formatQuantity(maxStock)}</strong> ${productUnit}`, 'warning');
         cart[index].quantity = maxStock;
         updateCart();
         return;
@@ -663,7 +800,7 @@ initDB().then(() => {
 
 $('#process-sale').on('click', async function() {
     if (cart.length === 0) {
-        alert('Cart is empty');
+        showCustomAlert('Empty Cart', 'Your cart is empty. Please add items before processing the sale.', 'warning');
         return;
     }
     
@@ -712,7 +849,7 @@ $('#process-sale').on('click', async function() {
                     await handleOfflineSale(saleData);
                 } else {
                     const error = xhr.responseJSON?.message || 'Error processing sale';
-                    alert(error);
+                    showCustomAlert('Error', `An error occurred: ${error}`, 'error');
                 }
             }
         });
@@ -760,7 +897,7 @@ async function handleOfflineSale(saleData) {
         updateCart();
     } catch (error) {
         console.error('Error saving offline sale:', error);
-        alert('Error saving sale offline. Please try again.');
+        showCustomAlert('Offline Error', 'Error saving sale offline. Please check your connection and try again.', 'error');
     }
 }
 

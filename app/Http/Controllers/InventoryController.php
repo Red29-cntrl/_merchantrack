@@ -70,8 +70,10 @@ class InventoryController extends Controller
                 $query->whereYear('created_at', $selectedYear);
             }
 
-            // Get movements ordered by latest first for display
-            $movements = $query->orderBy('created_at', 'desc')->get();
+            // Get movements ordered by latest first (newest to oldest) within the selected year
+            $movements = $query->orderBy('created_at', 'desc')
+                              ->orderBy('id', 'desc')
+                              ->get();
 
             // Compute running balance per product (based on all recorded movements in chronological order)
             // First, get all movements in chronological order for balance calculation
@@ -122,7 +124,8 @@ class InventoryController extends Controller
                     }
                 }
                 
-                $movement->opening_balance = $displayBalances[$productId];
+                // Ensure balance doesn't go negative - set to 0 minimum
+                $movement->opening_balance = max(0, $displayBalances[$productId]);
                 
                 if ($movement->type === 'out') {
                     $displayBalances[$productId] -= $movement->quantity;
@@ -130,7 +133,8 @@ class InventoryController extends Controller
                     $displayBalances[$productId] += $movement->quantity;
                 }
                 
-                $movement->running_balance = $displayBalances[$productId];
+                // Ensure balance doesn't go negative - set to 0 minimum
+                $movement->running_balance = max(0, $displayBalances[$productId]);
             }
         }
 

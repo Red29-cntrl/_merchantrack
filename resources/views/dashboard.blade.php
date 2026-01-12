@@ -145,5 +145,82 @@
         </div>
     </div>
 </div>
+
+{{-- Low Stock Alert Modal (Auto-show for Admin) --}}
+@if(auth()->user()->isAdmin() && $low_stock_products->count() > 0)
+<div class="modal fade" id="lowStockAlertModal" tabindex="-1" aria-labelledby="lowStockAlertModalLabel" aria-hidden="true" data-bs-backdrop="static" data-bs-keyboard="false">
+    <div class="modal-dialog modal-lg modal-dialog-scrollable">
+        <div class="modal-content">
+            <div class="modal-header bg-warning text-dark">
+                <h5 class="modal-title" id="lowStockAlertModalLabel">
+                    <i class="fas fa-exclamation-triangle me-2"></i>Low Stock Alert
+                </h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body">
+                <p class="mb-3">
+                    <strong>You have {{ $low_stock_products->count() }} product(s) with low stock or out of stock.</strong>
+                </p>
+                <div class="table-responsive">
+                    <table class="table table-hover">
+                        <thead>
+                            <tr>
+                                <th>Product Name</th>
+                                <th>Category</th>
+                                <th>Current Stock</th>
+                                <th>Reorder Level</th>
+                                <th>Status</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            @foreach($low_stock_products->take(20) as $product)
+                            <tr>
+                                <td>
+                                    <strong>{{ $product->name }}</strong>
+                                    @if($product->sku)
+                                    <br><small class="text-muted">SKU: {{ $product->sku }}</small>
+                                    @endif
+                                </td>
+                                <td>{{ $product->category->name ?? 'N/A' }}</td>
+                                <td>
+                                    <span class="fw-bold {{ $product->quantity == 0 ? 'text-danger' : 'text-warning' }}">
+                                        {{ number_format($product->quantity, 0) }} {{ $product->unit }}
+                                    </span>
+                                </td>
+                                <td>{{ number_format($product->reorder_level, 0) }} {{ $product->unit }}</td>
+                                <td>
+                                    <span class="badge bg-{{ $product->quantity == 0 ? 'danger' : 'warning' }}">
+                                        {{ $product->quantity == 0 ? 'Out of Stock' : 'Low Stock' }}
+                                    </span>
+                                </td>
+                            </tr>
+                            @endforeach
+                        </tbody>
+                    </table>
+                </div>
+                @if($low_stock_products->count() > 20)
+                <div class="mt-3 text-center">
+                    <p class="text-muted mb-2">Showing first 20 items. Total: {{ $low_stock_products->count() }} items.</p>
+                </div>
+                @endif
+            </div>
+            <div class="modal-footer">
+                <a href="{{ route('products.index', ['low_stock' => 1]) }}" class="btn btn-warning">
+                    <i class="fas fa-boxes me-2"></i>View All Low Stock Products
+                </a>
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+    // Show the low stock alert modal automatically for admin
+    const lowStockModal = new bootstrap.Modal(document.getElementById('lowStockAlertModal'));
+    lowStockModal.show();
+});
+</script>
+@endif
 @endsection
 

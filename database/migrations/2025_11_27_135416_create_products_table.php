@@ -22,7 +22,7 @@ class CreateProductsTable extends Migration
             $table->decimal('price', 10, 2);
             $table->decimal('cost', 10, 2)->nullable();
             $table->integer('quantity')->default(0);
-            $table->integer('reorder_level')->default(10);
+            $table->integer('reorder_level')->default(20);
             $table->string('unit')->default('pcs');
             $table->string('image')->nullable();
             $table->boolean('is_active')->default(true);
