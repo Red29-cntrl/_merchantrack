@@ -9,7 +9,6 @@ use App\Category;
 use App\InventoryMovement;
 use App\BusinessSetting;
 use Illuminate\Http\Request;
-use Illuminate\Support\Str;
 use Illuminate\Support\Facades\DB;
 
 class POSController extends Controller
@@ -49,7 +48,7 @@ class POSController extends Controller
         DB::beginTransaction();
         try {
             $sale = Sale::create([
-                'sale_number' => 'SALE-' . strtoupper(Str::random(8)),
+                'sale_number' => Sale::generateSaleNumber(),
                 'user_id' => auth()->id(),
                 'subtotal' => $request->subtotal,
                 'tax' => $request->tax ?? 0,
