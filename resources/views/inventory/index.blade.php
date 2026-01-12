@@ -87,7 +87,7 @@
                             <td>{{ $product->category->name }}</td>
                             <td>
                                 <span class="badge bg-{{ $product->isLowStock() ? 'warning' : 'success' }}">
-                                    {{ $product->quantity }}
+                                    {{ number_format($product->quantity, 0) }}
                                 </span>
                             </td>
                             <td>
@@ -217,7 +217,7 @@
                             <td>{{ $product->category->name ?? 'N/A' }}</td>
                             <td>
                                 <span class="badge bg-{{ $product->isLowStock() ? 'warning' : 'success' }}">
-                                    {{ $product->quantity }}
+                                    {{ number_format($product->quantity, 0) }}
                                 </span>
                             </td>
                             <td>
@@ -248,7 +248,7 @@
                             <th>Out</th>
                             <th>Balance</th>
                             <th>Reason</th>
-                            <th>User</th>
+                            <th>Staff</th>
                         </tr>
                     </thead>
                     <tbody>
@@ -257,22 +257,22 @@
                         <tr>
                             <td>{{ $movement->created_at->setTimezone('Asia/Manila')->format('M d, Y h:i:s A') }}</td>
                             <td>{{ $movement->product->name }}</td>
-                            <td>{{ $movement->opening_balance ?? 0 }}</td>
+                            <td>{{ number_format($movement->opening_balance ?? 0, 0) }}</td>
                             <td>
                                 @if($movement->type === 'out')
                                     —
                                 @else
-                                    {{ $movement->quantity }}
+                                    {{ number_format($movement->quantity, 0) }}
                                 @endif
                             </td>
                             <td>
                                 @if($movement->type === 'out')
-                                    {{ $movement->quantity }}
+                                    {{ number_format($movement->quantity, 0) }}
                                 @else
                                     —
                                 @endif
                             </td>
-                            <td>{{ $movement->running_balance ?? 0 }}</td>
+                            <td>{{ number_format($movement->running_balance ?? 0, 0) }}</td>
                             <td>{{ $movement->reason ?? 'N/A' }}</td>
                             <td>{{ $movement->user->name ?? 'N/A' }}</td>
                         </tr>
@@ -311,7 +311,7 @@
                             <option value="">Select Product</option>
                             @foreach($products as $product)
                             <option value="{{ $product->id }}" data-stock="{{ $product->quantity }}">
-                                {{ $product->name }} (Current: {{ $product->quantity }} {{ $product->unit }})
+                                {{ $product->name }} (Current: {{ number_format($product->quantity, 0) }} {{ $product->unit }})
                             </option>
                             @endforeach
                         </select>

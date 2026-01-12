@@ -66,6 +66,13 @@
 @section('content')
 <div class="container-fluid">
     <h2 class="mb-4"><i class="fas fa-cash-register me-2"></i>Point of Sale</h2>
+    
+    <script>
+    // Number formatting function with commas and decimal points
+    function formatNumber(num) {
+        return parseFloat(num).toFixed(2).replace(/\d(?=(\d{3})+\.)/g, '$&,');
+    }
+    </script>
 
     <div class="pos-container">
         <div>
@@ -111,7 +118,7 @@
                             <strong>{{ $product->name }}</strong><br>
                             <small class="text-muted">{{ $product->sku }}</small><br>
                             <span class="badge bg-primary">₱{{ number_format($product->price, 2) }}</span><br>
-                            <small>Stock: {{ $product->quantity }} {{ ucfirst($product->unit ?? 'pcs') }}</small>
+                            <small>Stock: {{ number_format($product->quantity, 0) }} {{ ucfirst($product->unit ?? 'pcs') }}</small>
                         </div>
                         @endforeach
                     </div>
@@ -257,6 +264,35 @@
 
 @section('scripts')
 <script>
+// Number formatting function with commas and decimal points (for prices/currency)
+function formatNumber(num) {
+    return parseFloat(num).toFixed(2).replace(/\d(?=(\d{3})+\.)/g, '$&,');
+}
+
+// Number formatting function for integers (quantities) - with commas but no decimals
+function formatQuantity(num) {
+    return parseInt(num).toString().replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+}
+
+// Function to remove commas from a string (for parsing input)
+function removeCommas(str) {
+    return str.toString().replace(/,/g, '');
+}
+
+// Function to format quantity input on blur
+function formatQuantityInput(input) {
+    const value = removeCommas(input.value);
+    if (value && !isNaN(value)) {
+        input.value = formatQuantity(value);
+    }
+}
+
+// Function to handle quantity input change (remove commas for calculation)
+function handleQuantityInputChange(index, input) {
+    const numericValue = removeCommas(input.value);
+    updateCartQuantity(index, numericValue);
+}
+
 let cart = [];
 const products = @json($products);
 
@@ -368,14 +404,13 @@ function updateCart() {
                 </div>
                 <div class="d-flex align-items-center gap-2 mb-2">
                     <label class="mb-0" style="font-size: 14px; font-weight: 500;">Qty:</label>
-                    <input type="number" 
+                    <input type="text" 
                            class="quantity-input" 
-                           min="1" 
-                           max="${maxStock}" 
-                           value="${item.quantity}" 
+                           value="${formatQuantity(item.quantity)}" 
                            data-cart-index="${index}"
-                           onchange="updateCartQuantity(${index}, this.value)"
-                           style="font-size: 14px;">
+                           onblur="formatQuantityInput(this); handleQuantityInputChange(${index}, this)"
+                           onkeypress="return (event.charCode >= 48 && event.charCode <= 57)"
+                           style="font-size: 14px; text-align: right;">
                     <label class="mb-0" style="font-size: 14px; font-weight: 500;">Unit:</label>
                     <select class="unit-select" 
                             data-cart-index="${index}"
@@ -385,7 +420,7 @@ function updateCart() {
                     </select>
                 </div>
                 <div class="d-flex justify-content-between align-items-center">
-                    <span style="font-size: 15px; font-weight: 600;">₱${item.unit_price.toFixed(2)} × ${item.quantity} = ₱${(item.unit_price * item.quantity).toFixed(2)}</span>
+                    <span style="font-size: 15px; font-weight: 600;">₱${formatNumber(item.unit_price)} × ${formatQuantity(item.quantity)} = ₱${formatNumber(item.unit_price * item.quantity)}</span>
                         <button class="btn btn-sm btn-danger" onclick="removeFromCart(${index})">
                             <i class="fas fa-trash"></i>
                         </button>
@@ -399,7 +434,8 @@ function updateCart() {
 }
 
 function updateCartQuantity(index, newQuantity) {
-    const quantity = parseInt(newQuantity) || 1;
+    // Remove commas if present and parse as integer
+    const quantity = parseInt(removeCommas(newQuantity)) || 1;
     const item = cart[index];
     
     if (!item) return;
@@ -414,7 +450,7 @@ function updateCartQuantity(index, newQuantity) {
     }
     
     if (quantity > maxStock) {
-        alert('Insufficient stock. Available: ' + maxStock);
+        alert('Insufficient stock. Available: ' + formatQuantity(maxStock));
         cart[index].quantity = maxStock;
         updateCart();
         return;
@@ -442,8 +478,8 @@ function calculateTotal() {
     const tax = subtotal * (taxRate / 100);
     const total = subtotal + tax - discount;
     
-    $('#subtotal').text('₱' + subtotal.toFixed(2));
-    $('#total').text('₱' + total.toFixed(2));
+    $('#subtotal').text('₱' + formatNumber(subtotal));
+    $('#total').text('₱' + formatNumber(total));
 }
 
 $('#tax-rate, #discount').on('input', calculateTotal);
@@ -807,10 +843,10 @@ function showSuccessModal(sale, business) {
             if (productName && quantity > 0) {
                 receiptHtml += `
                     <tr style="border-bottom: 1px dotted #666;">
-                        <td style="padding: 2mm 1mm; text-align: left;">${quantity}</td>
+                        <td style="padding: 2mm 1mm; text-align: left;">${formatQuantity(quantity)}</td>
                         <td style="padding: 2mm 1mm; text-align: left;">${unit}</td>
                         <td style="padding: 2mm 1mm; text-align: left;">${productName}</td>
-                        <td style="padding: 2mm 1mm; text-align: right;">₱${amount.toFixed(2)}</td>
+                        <td style="padding: 2mm 1mm; text-align: right;">₱${formatNumber(amount)}</td>
                     </tr>
                 `;
             }
@@ -822,7 +858,7 @@ function showSuccessModal(sale, business) {
                 <tfoot>
                     <tr style="border-top: 2px solid #000;">
                         <td colspan="3" style="padding: 3mm 1mm; text-align: right; font-weight: bold; font-size: 10pt;">TOTAL:</td>
-                        <td style="padding: 3mm 1mm; text-align: right; font-weight: bold; font-size: 11pt;">₱${parseFloat(sale.total || 0).toFixed(2)}</td>
+                        <td style="padding: 3mm 1mm; text-align: right; font-weight: bold; font-size: 11pt;">₱${formatNumber(parseFloat(sale.total || 0))}</td>
                     </tr>
                 </tfoot>
             </table>

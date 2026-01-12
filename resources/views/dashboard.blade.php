@@ -129,8 +129,8 @@
                         <div>
                             <strong>{{ $product->name }}</strong><br>
                             <small class="text-muted">
-                                Stock: {{ $product->quantity }} {{ $product->unit }} | 
-                                Reorder: {{ $product->reorder_level }} {{ $product->unit }}
+                                Stock: {{ number_format($product->quantity, 0) }} {{ $product->unit }} | 
+                                Reorder: {{ number_format($product->reorder_level, 0) }} {{ $product->unit }}
                             </small>
                         </div>
                         <span class="badge bg-{{ $product->quantity == 0 ? 'danger' : 'warning' }}">

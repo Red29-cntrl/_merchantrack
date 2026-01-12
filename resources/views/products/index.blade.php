@@ -77,7 +77,7 @@
                             <td>₱{{ number_format($product->price, 2) }}</td>
                             <td>
                                 <span class="badge bg-{{ $product->isLowStock() ? 'warning' : 'success' }}">
-                                    {{ $product->quantity }} {{ $product->unit }}
+                                    {{ number_format($product->quantity, 0) }} {{ $product->unit }}
                                 </span>
                             </td>
                             <td>

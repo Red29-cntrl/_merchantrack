@@ -34,7 +34,7 @@
                             <td>{{ $product->sku }}</td>
                             <td>{{ $product->name }}</td>
                             <td>₱{{ number_format($product->price, 2) }}</td>
-                            <td>{{ $product->quantity }} {{ $product->unit }}</td>
+                            <td>{{ number_format($product->quantity, 0) }} {{ $product->unit }}</td>
                         </tr>
                         @empty
                         <tr>

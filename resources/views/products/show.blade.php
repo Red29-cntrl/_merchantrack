@@ -20,8 +20,8 @@
                             <p><strong>Cost:</strong> ₱{{ number_format($product->cost ?? 0, 2) }}</p>
                         </div>
                         <div class="col-md-6">
-                            <p><strong>Stock:</strong> {{ $product->quantity }} {{ $product->unit }}</p>
-                            <p><strong>Reorder Level:</strong> {{ $product->reorder_level }}</p>
+                            <p><strong>Stock:</strong> {{ number_format($product->quantity, 0) }} {{ $product->unit }}</p>
+                            <p><strong>Reorder Level:</strong> {{ number_format($product->reorder_level, 0) }}</p>
                             <p><strong>Status:</strong> 
                                 <span class="badge bg-{{ $product->is_active ? 'success' : 'secondary' }}">
                                     {{ $product->is_active ? 'Active' : 'Inactive' }}
