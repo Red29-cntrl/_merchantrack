@@ -8,7 +8,7 @@
         <h2 class="mb-0"><i class="fas fa-chart-line me-2"></i>Demand Forecasts</h2>
         <div class="d-flex gap-2 flex-wrap">
             <form method="GET" action="{{ route('forecasts.index') }}" class="row g-2 align-items-center" id="table-filter-form">
-                <input type="hidden" name="graph_category" value="{{ request('graph_category') }}">
+                <input type="hidden" name="category_trend" value="{{ request('category_trend', $selectedCategoryId ?? '') }}">
                 <div class="col-auto">
                     <label class="form-label mb-0 small text-muted">Category</label>
                     <select name="category_id" class="form-select form-select-sm">
@@ -93,23 +93,62 @@
                 <table class="table table-hover align-middle">
                     <thead>
                         <tr>
-                            <th>Product</th>
-                            <th>Category</th>
-                            <th class="text-end">Total Forecast ({{ $year }})</th>
-                            <th class="text-end">Avg / Month</th>
-                            <th class="text-end">Peak Month</th>
-                            <th class="text-end">Avg Confidence</th>
+                            <th>
+                                Product
+                                <i class="fas fa-info-circle text-muted ms-1" 
+                                   data-bs-toggle="tooltip" 
+                                   data-bs-placement="top" 
+                                   data-bs-title="The product name and SKU being evaluated for demand forecasting."
+                                   style="font-size: 0.85em; cursor: help;"></i>
+                            </th>
+                            <th>
+                                Category
+                                <i class="fas fa-info-circle text-muted ms-1" 
+                                   data-bs-toggle="tooltip" 
+                                   data-bs-placement="top" 
+                                   data-bs-title="The product category used for filtering and organization."
+                                   style="font-size: 0.85em; cursor: help;"></i>
+                            </th>
+                            <th class="text-end">
+                                Month Forecast
+                                <i class="fas fa-info-circle text-muted ms-1" 
+                                   data-bs-toggle="tooltip" 
+                                   data-bs-placement="top" 
+                                   data-bs-title="The predicted quantity of this product expected to be sold for the selected month, based on historical sales data."
+                                   style="font-size: 0.85em; cursor: help;"></i>
+                            </th>
+                            <th class="text-end">
+                                Current Inventory
+                                <i class="fas fa-info-circle text-muted ms-1" 
+                                   data-bs-toggle="tooltip" 
+                                   data-bs-placement="top" 
+                                   data-bs-title="The current available stock level of the product in inventory."
+                                   style="font-size: 0.85em; cursor: help;"></i>
+                            </th>
+                            <th class="text-end">
+                                Inventory Gap
+                                <i class="fas fa-info-circle text-muted ms-1" 
+                                   data-bs-toggle="tooltip" 
+                                   data-bs-placement="top" 
+                                   data-bs-title="The difference between forecasted demand and current inventory. A positive value indicates potential shortage, while a negative value indicates surplus."
+                                   style="font-size: 0.85em; cursor: help;"></i>
+                            </th>
+                            <th class="text-end">
+                                Reorder Required
+                                <i class="fas fa-info-circle text-muted ms-1" 
+                                   data-bs-toggle="tooltip" 
+                                   data-bs-placement="top" 
+                                   data-bs-title="Indicates whether additional stock should be ordered based on forecasted demand and current inventory."
+                                   style="font-size: 0.85em; cursor: help;"></i>
+                            </th>
                         </tr>
                     </thead>
                     <tbody>
                         @forelse($forecastProducts as $product)
                         @php
-                            $forecasts = $product->demandForecasts;
-                            $total = (int) ($product->forecast_total ?? 0);
-                            $monthsCount = max($forecasts->count(), 1);
-                            $avg = $monthsCount ? round($total / $monthsCount, 2) : 0;
-                            $peak = $forecasts->sortByDesc('predicted_demand')->first();
-                            $avgConfidence = $forecasts->avg('confidence_level') ?? 0;
+                            $monthForecast = $product->month_forecast ?? 0;
+                            $inventoryGap = $product->inventory_gap ?? 0;
+                            $reorderRequired = $product->reorder_required ?? false;
                         @endphp
                         <tr>
                             <td>
@@ -117,16 +156,20 @@
                                 <div class="text-muted small">{{ $product->sku }}</div>
                             </td>
                             <td>{{ $product->category->name ?? 'N/A' }}</td>
-                            <td class="text-end"><span class="badge bg-primary">{{ $total }}</span></td>
-                            <td class="text-end">{{ $avg }}</td>
+                            <td class="text-end"><span class="badge bg-info">{{ number_format($monthForecast) }}</span></td>
+                            <td class="text-end">{{ number_format($product->quantity) }}</td>
                             <td class="text-end">
-                                @if($peak)
-                                    {{ $peak->forecast_date->format('M') }} ({{ $peak->predicted_demand }})
+                                <span class="badge bg-{{ $inventoryGap > 0 ? 'danger' : 'success' }}">
+                                    {{ $inventoryGap > 0 ? '+' : '' }}{{ number_format($inventoryGap) }}
+                                </span>
+                            </td>
+                            <td class="text-end">
+                                @if($reorderRequired)
+                                    <span class="badge bg-warning text-dark">Yes</span>
                                 @else
-                                    N/A
+                                    <span class="badge bg-success">No</span>
                                 @endif
                             </td>
-                            <td class="text-end">{{ number_format($avgConfidence, 1) }}%</td>
                         </tr>
                         @empty
                         <tr>
@@ -140,78 +183,104 @@
         </div>
     </div>
 
-    {{-- Graph Filter Section --}}
+
+    {{-- Actual vs Forecasted Monthly Demand Line Chart --}}
+    @if(isset($actualVsForecastedData) && !empty($actualVsForecastedData['datasets']))
     <div class="card mt-4">
+        <div class="card-header bg-primary text-white">
+            <h5 class="mb-0">
+                <i class="fas fa-chart-line me-2"></i>
+                Actual vs Forecasted Monthly Demand
+            </h5>
+            <small class="text-white-50">
+                Historical actual sales vs forecasted demand over time
+            </small>
+        </div>
         <div class="card-body">
-            <h5 class="mb-3"><i class="fas fa-chart-line me-2"></i>Graph Settings</h5>
-            <form method="GET" action="{{ route('forecasts.index') }}" class="row g-2 align-items-center" id="graph-filter-form">
-                <input type="hidden" name="category_id" value="{{ request('category_id') }}">
-                <input type="hidden" name="year" value="{{ request('year', $year) }}">
-                <input type="hidden" name="month" value="{{ request('month', $selectedMonth) }}">
-                <input type="hidden" name="confidence" value="{{ request('confidence') }}">
-                <input type="hidden" name="sort" value="{{ request('sort', $sort) }}">
-                <input type="hidden" name="search" value="{{ request('search') }}">
-                <div class="col-auto">
-                    <label class="form-label mb-0"><strong>Graph Category</strong></label>
-                    <select name="graph_category" class="form-select" onchange="this.form.submit()">
-                        <option value="">All Categories (Separate Graphs)</option>
-                        @foreach($categories as $category)
-                        <option value="{{ $category->id }}" {{ request('graph_category') == $category->id ? 'selected' : '' }}>
-                            {{ $category->name }} Only
-                        </option>
-                        @endforeach
-                    </select>
-                </div>
-                @if(request('graph_category'))
-                <div class="col-auto align-self-end">
-                    <a href="{{ route('forecasts.index', array_merge(request()->except('graph_category'), ['graph_category' => ''])) }}" class="btn btn-outline-secondary btn-sm" title="Clear Graph Filter">
-                        <i class="fas fa-times"></i>
-                    </a>
-                </div>
-                @endif
-            </form>
+            <canvas id="actualVsForecastedChart" height="80"></canvas>
         </div>
     </div>
+    @endif
 
-    {{-- Display separate graphs for each category OR single graph if category filter is selected --}}
-    @if(isset($forecastData))
-        @if(isset($forecastData['graphs_by_category']) && !empty($forecastData['graphs_by_category']))
-            {{-- Multiple graphs - one for each category --}}
-            @foreach($forecastData['graphs_by_category'] as $catId => $graphData)
-                @if(!empty($graphData['datasets']))
-                <div class="card mt-4">
-                    <div class="card-header bg-primary text-white">
-                        <h5 class="mb-0">
-                            <i class="fas fa-chart-line me-2"></i>
-                            {{ $graphData['category_name'] ?? 'Category' }} - Best-Selling Products
-                        </h5>
-                        <small class="text-white-50">
-                            Top products from this category for {{ date('F Y', mktime(0, 0, 0, $selectedMonth, 1, $year)) }}
-                        </small>
-                    </div>
-                    <div class="card-body">
-                        <canvas id="forecastChart{{ $catId }}" height="80"></canvas>
-                    </div>
-                </div>
-                @endif
-            @endforeach
-        @elseif(!empty($forecastData['datasets']))
-            {{-- Single graph - when category filter is selected --}}
-            <div class="card mt-4">
-                <div class="card-header bg-primary text-white">
+    {{-- Forecasted Demand per Product Bar Chart --}}
+    @if(isset($forecastPerProductData) && !empty($forecastPerProductData['datasets']))
+    <div class="card mt-4">
+        <div class="card-header bg-success text-white">
+            <h5 class="mb-0">
+                <i class="fas fa-chart-bar me-2"></i>
+                Forecasted Demand per Product
+            </h5>
+            <small class="text-white-50">
+                Top products by forecasted demand for {{ date('F Y', mktime(0, 0, 0, $selectedMonth, 1, $year)) }}
+            </small>
+        </div>
+        <div class="card-body">
+            <canvas id="forecastPerProductChart" height="80"></canvas>
+        </div>
+    </div>
+    @endif
+
+    {{-- Forecasted Demand vs Inventory Bar Chart --}}
+    @if(isset($forecastVsInventoryData) && !empty($forecastVsInventoryData['datasets']))
+    <div class="card mt-4">
+        <div class="card-header bg-warning text-dark">
+            <h5 class="mb-0">
+                <i class="fas fa-chart-bar me-2"></i>
+                Forecasted Demand vs Current Inventory
+            </h5>
+            <small class="text-dark">
+                Comparison of forecasted demand and current inventory levels for {{ date('F Y', mktime(0, 0, 0, $selectedMonth, 1, $year)) }}
+            </small>
+        </div>
+        <div class="card-body">
+            <canvas id="forecastVsInventoryChart" height="80"></canvas>
+        </div>
+    </div>
+    @endif
+
+    {{-- Dynamic Category Product Trend Graph --}}
+    @if(isset($categoriesWithSales) && $categoriesWithSales->isNotEmpty() && isset($categoryTrendData))
+    <div class="card mt-4">
+        <div class="card-header bg-info text-white">
+            <div class="d-flex justify-content-between align-items-center">
+                <div>
                     <h5 class="mb-0">
                         <i class="fas fa-chart-line me-2"></i>
-                        {{ $forecastData['category_name'] ?? 'Best-Selling Products' }} - Demand Forecast
+                        Category Product Trend
                     </h5>
                     <small class="text-white-50">
-                        Top products for {{ date('F Y', mktime(0, 0, 0, $selectedMonth, 1, $year)) }}
+                        Actual vs Forecasted Monthly Demand by Category
                     </small>
                 </div>
-                <div class="card-body">
-                    <canvas id="forecastChart" height="80"></canvas>
+                <div class="ms-3">
+                    {{-- Data-driven category selector: only shows categories with sales data --}}
+                    <form method="GET" action="{{ route('forecasts.index') }}" class="d-inline" id="category-trend-form">
+                        <input type="hidden" name="category_id" value="{{ request('category_id') }}">
+                        <input type="hidden" name="year" value="{{ request('year', $year) }}">
+                        <input type="hidden" name="month" value="{{ request('month', $selectedMonth) }}">
+                        <input type="hidden" name="confidence" value="{{ request('confidence') }}">
+                        <input type="hidden" name="sort" value="{{ request('sort', $sort) }}">
+                        <input type="hidden" name="search" value="{{ request('search') }}">
+                        <select name="category_trend" class="form-select form-select-sm" onchange="this.form.submit()" style="min-width: 250px;">
+                            @foreach($categoriesWithSales as $cat)
+                            <option value="{{ $cat->id }}" {{ $selectedCategoryId == $cat->id ? 'selected' : '' }}>
+                                {{ $cat->name }}
+                            </option>
+                            @endforeach
+                        </select>
+                    </form>
                 </div>
             </div>
-        @endif
+        </div>
+        <div class="card-body">
+            <canvas id="categoryTrendChart" height="80"></canvas>
+            <p class="text-muted small mt-2 mb-0">
+                <i class="fas fa-info-circle"></i> 
+                <strong>Note:</strong> Categories appear in the selector only if they have historical sales data. 
+                When a category receives sales in the future, it will automatically appear without code changes.
+            </p>
+        </div>
+    </div>
     @endif
 
     @if(isset($forecastSummary) && !empty($forecastSummary))
@@ -295,138 +364,245 @@
     </div>
 </div>
 
-@if(isset($forecastData))
 @section('scripts')
 <script src="https://cdn.jsdelivr.net/npm/chart.js@3.9.1/dist/chart.min.js"></script>
 <script>
-// Preserve graph_category when submitting table filter form
+// Initialize Bootstrap tooltips
+document.addEventListener('DOMContentLoaded', function() {
+    var tooltipTriggerList = [].slice.call(document.querySelectorAll('[data-bs-toggle="tooltip"]'));
+    var tooltipList = tooltipTriggerList.map(function (tooltipTriggerEl) {
+        return new bootstrap.Tooltip(tooltipTriggerEl);
+    });
+});
+// Preserve category_trend when submitting table filter form
 const tableFilterForm = document.getElementById('table-filter-form');
 if (tableFilterForm) {
     tableFilterForm.addEventListener('submit', function(e) {
-        const graphCategory = new URLSearchParams(window.location.search).get('graph_category');
-        if (graphCategory) {
-            const hiddenInput = this.querySelector('input[name="graph_category"]');
-            if (hiddenInput) {
-                hiddenInput.value = graphCategory;
-            }
+        const categoryTrend = new URLSearchParams(window.location.search).get('category_trend');
+        if (categoryTrend) {
+            const hiddenInput = document.createElement('input');
+            hiddenInput.type = 'hidden';
+            hiddenInput.name = 'category_trend';
+            hiddenInput.value = categoryTrend;
+            this.appendChild(hiddenInput);
         }
     });
 }
 
-// Preserve table filters when submitting graph filter form
-const graphFilterForm = document.getElementById('graph-filter-form');
-if (graphFilterForm) {
-    graphFilterForm.addEventListener('submit', function(e) {
-        const urlParams = new URLSearchParams(window.location.search);
-        const tableFilters = ['category_id', 'year', 'month', 'confidence', 'sort', 'search'];
-        
-        tableFilters.forEach(function(filter) {
-            const value = urlParams.get(filter);
-            if (value) {
-                const hiddenInput = graphFilterForm.querySelector('input[name="' + filter + '"]');
-                if (hiddenInput) {
-                    hiddenInput.value = value;
+// Create Actual vs Forecasted chart
+@if(isset($actualVsForecastedData) && !empty($actualVsForecastedData['datasets']))
+    const actualVsForecastedCtx = document.getElementById('actualVsForecastedChart');
+    if (actualVsForecastedCtx) {
+        new Chart(actualVsForecastedCtx.getContext('2d'), {
+            type: 'line',
+            data: @json($actualVsForecastedData),
+            options: {
+                responsive: true,
+                maintainAspectRatio: true,
+                plugins: {
+                    title: {
+                        display: true,
+                        text: 'Actual vs Forecasted Monthly Demand',
+                        font: { size: 16, weight: 'bold' }
+                    },
+                    legend: {
+                        display: true,
+                        position: 'top'
+                    },
+                    tooltip: {
+                        mode: 'index',
+                        intersect: false
+                    }
+                },
+                scales: {
+                    y: {
+                        beginAtZero: true,
+                        title: {
+                            display: true,
+                            text: 'Demand (Units)',
+                            font: { weight: 'bold' }
+                        }
+                    },
+                    x: {
+                        title: {
+                            display: true,
+                            text: 'Month',
+                            font: { weight: 'bold' }
+                        }
+                    }
                 }
             }
         });
-    });
-}
+    }
+@endif
 
-const forecastData = @json($forecastData);
-
-// Function to create a chart
-function createChart(canvasId, data, categoryName) {
-    const ctx = document.getElementById(canvasId);
-    if (!ctx) return;
-    
-    new Chart(ctx.getContext('2d'), {
-        type: 'line',
-        data: data,
-        options: {
-            responsive: true,
-            maintainAspectRatio: true,
-            plugins: {
-                title: {
-                    display: true,
-                    text: categoryName + ' - Daily Demand Forecast for {{ date('F Y', mktime(0, 0, 0, $selectedMonth, 1, $year)) }}',
-                    font: {
-                        size: 16,
-                        weight: 'bold'
+// Create Forecast per Product bar chart
+@if(isset($forecastPerProductData) && !empty($forecastPerProductData['datasets']))
+    const forecastPerProductCtx = document.getElementById('forecastPerProductChart');
+    if (forecastPerProductCtx) {
+        new Chart(forecastPerProductCtx.getContext('2d'), {
+            type: 'bar',
+            data: @json($forecastPerProductData),
+            options: {
+                responsive: true,
+                maintainAspectRatio: true,
+                plugins: {
+                    title: {
+                        display: true,
+                        text: 'Forecasted Demand per Product',
+                        font: { size: 16, weight: 'bold' }
+                    },
+                    legend: {
+                        display: false
                     }
                 },
-                legend: {
-                    display: true,
-                    position: 'right',
-                    labels: {
-                        font: {
-                            size: 11
+                scales: {
+                    y: {
+                        beginAtZero: true,
+                        title: {
+                            display: true,
+                            text: 'Forecasted Demand (Units)',
+                            font: { weight: 'bold' }
                         }
-                    }
-                },
-                tooltip: {
-                    backgroundColor: 'rgba(0, 0, 0, 0.8)',
-                    padding: 10,
-                    callbacks: {
-                        title: function(context) {
-                            return '📅 ' + context[0].label;
+                    },
+                    x: {
+                        title: {
+                            display: true,
+                            text: 'Product',
+                            font: { weight: 'bold' }
                         },
-                        label: function(context) {
-                            const label = context.dataset.label || '';
-                            const value = context.parsed.y || 0;
-                            return '  ' + label + ': ' + value.toLocaleString() + ' units';
+                        ticks: {
+                            maxRotation: 45,
+                            minRotation: 45
                         }
-                    }
-                }
-            },
-            scales: {
-                y: {
-                    beginAtZero: true,
-                    title: {
-                        display: true,
-                        text: 'Forecasted Demand (Units)',
-                        font: {
-                            weight: 'bold'
-                        }
-                    },
-                    ticks: {
-                        callback: function(value) {
-                            return value.toLocaleString();
-                        }
-                    }
-                },
-                x: {
-                    title: {
-                        display: true,
-                        text: 'Date',
-                        font: {
-                            weight: 'bold'
-                        }
-                    },
-                    ticks: {
-                        maxRotation: 45,
-                        minRotation: 45
                     }
                 }
             }
-        }
-    });
-}
+        });
+    }
+@endif
 
-// Create charts based on data structure
-@if(isset($forecastData['graphs_by_category']) && !empty($forecastData['graphs_by_category']))
-    // Multiple graphs - one for each category
-    @foreach($forecastData['graphs_by_category'] as $catId => $graphData)
-        @if(!empty($graphData['datasets']))
-        createChart('forecastChart{{ $catId }}', @json($graphData), '{{ $graphData['category_name'] ?? 'Category' }}');
-        @endif
-    @endforeach
-@elseif(!empty($forecastData['datasets']))
-    // Single graph - when category filter is selected
-    createChart('forecastChart', @json($forecastData), '{{ $forecastData['category_name'] ?? 'Best-Selling Products' }}');
+// Create Forecast vs Inventory bar chart
+@if(isset($forecastVsInventoryData) && !empty($forecastVsInventoryData['datasets']))
+    const forecastVsInventoryCtx = document.getElementById('forecastVsInventoryChart');
+    if (forecastVsInventoryCtx) {
+        new Chart(forecastVsInventoryCtx.getContext('2d'), {
+            type: 'bar',
+            data: @json($forecastVsInventoryData),
+            options: {
+                responsive: true,
+                maintainAspectRatio: true,
+                plugins: {
+                    title: {
+                        display: true,
+                        text: 'Forecasted Demand vs Current Inventory',
+                        font: { size: 16, weight: 'bold' }
+                    },
+                    legend: {
+                        display: true,
+                        position: 'top'
+                    }
+                },
+                scales: {
+                    y: {
+                        beginAtZero: true,
+                        title: {
+                            display: true,
+                            text: 'Quantity (Units)',
+                            font: { weight: 'bold' }
+                        }
+                    },
+                    x: {
+                        title: {
+                            display: true,
+                            text: 'Product',
+                            font: { weight: 'bold' }
+                        },
+                        ticks: {
+                            maxRotation: 45,
+                            minRotation: 45
+                        }
+                    }
+                }
+            }
+        });
+    }
+@endif
+
+// Create Dynamic Category Product Trend chart
+@if(isset($categoryTrendData) && !empty($categoryTrendData['datasets']))
+    const categoryTrendCtx = document.getElementById('categoryTrendChart');
+    if (categoryTrendCtx) {
+        new Chart(categoryTrendCtx.getContext('2d'), {
+            type: 'line',
+            data: @json($categoryTrendData),
+            options: {
+                responsive: true,
+                maintainAspectRatio: true,
+                plugins: {
+                    title: {
+                        display: true,
+                        text: '{{ $categoryTrendData['category_name'] ?? 'Category' }} - Actual vs Forecasted Monthly Demand',
+                        font: { size: 16, weight: 'bold' }
+                    },
+                    legend: {
+                        display: true,
+                        position: 'top'
+                    },
+                    tooltip: {
+                        mode: 'index',
+                        intersect: false,
+                        callbacks: {
+                            title: function(context) {
+                                return '📅 ' + context[0].label;
+                            },
+                            label: function(context) {
+                                const label = context.dataset.label || '';
+                                const value = context.parsed.y !== null ? context.parsed.y.toLocaleString() : 'N/A';
+                                return '  ' + label + ': ' + value + ' units';
+                            }
+                        }
+                    }
+                },
+                scales: {
+                    y: {
+                        beginAtZero: true,
+                        title: {
+                            display: true,
+                            text: 'Quantity (Units)',
+                            font: { weight: 'bold' }
+                        },
+                        ticks: {
+                            callback: function(value) {
+                                return value.toLocaleString();
+                            }
+                        }
+                    },
+                    x: {
+                        title: {
+                            display: true,
+                            text: 'Month',
+                            font: { weight: 'bold' }
+                        }
+                    }
+                }
+            }
+        });
+    }
 @endif
 </script>
 @endsection
-@endif
+
+{{-- Initialize Bootstrap tooltips for column headers --}}
+<script>
+// Initialize Bootstrap tooltips for information icons
+document.addEventListener('DOMContentLoaded', function() {
+    var tooltipTriggerList = [].slice.call(document.querySelectorAll('[data-bs-toggle="tooltip"]'));
+    var tooltipList = tooltipTriggerList.map(function (tooltipTriggerEl) {
+        return new bootstrap.Tooltip(tooltipTriggerEl);
+    });
+});
+</script>
 @endsection
 
 

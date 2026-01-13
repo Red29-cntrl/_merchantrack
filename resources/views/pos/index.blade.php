@@ -208,12 +208,8 @@
             <div class="modal-body text-center">
                 <div id="camera-scanner-container" style="position: relative;">
                     <video id="camera-video" autoplay playsinline style="width: 100%; max-width: 500px; border: 2px solid #2563eb; border-radius: 8px; background: #000;"></video>
-                    <canvas id="camera-canvas" style="display: none;"></canvas>
                     <div class="mt-3">
-                        <p class="text-muted mb-2">Point your camera at the SKU text</p>
-                        <button type="button" class="btn btn-primary" id="capture-sku-btn">
-                            <i class="fas fa-camera me-2"></i>Capture & Scan SKU
-                        </button>
+                        <p class="text-muted mb-2">Point your camera at the barcode. It will scan automatically.</p>
                         <div id="camera-status" class="alert alert-info mb-0 mt-3" style="display: none;"></div>
                     </div>
                 </div>
@@ -328,8 +324,8 @@
 @endsection
 
 @section('scripts')
-<!-- Tesseract.js library for OCR SKU text scanning -->
-<script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
+<!-- ZXing library for live barcode scanning -->
+<script src="https://unpkg.com/@zxing/library@0.20.0/umd/index.min.js"></script>
 <script>
 // Number formatting function with commas and decimal points (for prices/currency)
 function formatNumber(num) {
@@ -845,9 +841,10 @@ function checkOnlineStatus() {
 }
 
 // Camera scanner variables
-let cameraStream = null;
 let isScanning = false;
 let detectedSku = null;
+let barcodeReader = null;
+let barcodeDetectionLocked = false;
 
 // Initialize camera scanner button
 $('#camera-scanner-btn').on('click', function() {
@@ -862,7 +859,6 @@ $('#cameraScannerModal').on('shown.bs.modal', function () {
 // Stop camera scanner when modal is hidden
 $('#cameraScannerModal').on('hidden.bs.modal', function () {
     stopCameraScanner();
-    resetScannerUI();
     $('#product-search').focus();
 });
 
@@ -871,226 +867,63 @@ $('#stop-camera-btn, #close-camera-modal').on('click', function() {
     stopCameraScanner();
 });
 
-// Capture and scan SKU button
-$('#capture-sku-btn').on('click', function() {
-    captureAndScanSKU();
-});
-
 // Function to start camera scanner
 function startCameraScanner() {
     if (isScanning) return;
     
-    const video = document.getElementById('camera-video');
-    
-    // Try to start with back camera first
-    navigator.mediaDevices.getUserMedia({ 
-        video: { 
-            facingMode: "environment",
-            width: { ideal: 1280 },
-            height: { ideal: 720 }
-        } 
-    }).then((stream) => {
-        cameraStream = stream;
-        video.srcObject = stream;
+    if (!barcodeReader) {
+        barcodeReader = new ZXing.BrowserMultiFormatReader();
+    }
+
+    $('#camera-status').removeClass('alert-success alert-danger').addClass('alert-info')
+        .text('Initializing camera...').show();
+
+    barcodeReader.decodeFromVideoDevice(null, 'camera-video', (result, err) => {
+        if (result && !barcodeDetectionLocked) {
+            barcodeDetectionLocked = true;
+            detectedSku = result.text.trim();
+
+            if (detectedSku.length === 0) {
+                barcodeDetectionLocked = false;
+                return;
+            }
+
+            $('#camera-status').removeClass('alert-info alert-danger').addClass('alert-success')
+                .text('Barcode detected: ' + detectedSku + '. Adding to cart...');
+
+            setTimeout(async () => {
+                await handleBarcodeOrSkuInput(detectedSku);
+                $('#cameraScannerModal').modal('hide');
+                stopCameraScanner();
+            }, 400);
+        } else if (err && err.name !== 'NotFoundException') {
+            console.error('Barcode scan error:', err);
+            $('#camera-status').removeClass('alert-info alert-success').addClass('alert-danger')
+                .text('Camera error. Please check permissions and try again.').show();
+        }
+    }).then(() => {
         isScanning = true;
+        barcodeDetectionLocked = false;
+        detectedSku = null;
         $('#camera-status').removeClass('alert-danger').addClass('alert-info')
-            .text('Camera started. Point at the SKU text and click "Capture & Scan SKU".').show();
-        $('#capture-sku-btn').prop('disabled', false);
-    }).catch((err) => {
-        console.error('Error starting back camera:', err);
-        
-        // Try front camera if back camera fails
-        navigator.mediaDevices.getUserMedia({ 
-            video: { 
-                facingMode: "user",
-                width: { ideal: 1280 },
-                height: { ideal: 720 }
-            } 
-        }).then((stream) => {
-            cameraStream = stream;
-            video.srcObject = stream;
-            isScanning = true;
-            $('#camera-status').removeClass('alert-danger').addClass('alert-info')
-                .text('Camera started. Point at the SKU text and click "Capture & Scan SKU".').show();
-            $('#capture-sku-btn').prop('disabled', false);
-        }).catch((err2) => {
-            console.error('Error starting front camera:', err2);
-            $('#camera-status').removeClass('alert-info').addClass('alert-danger')
-                .text('Unable to start camera. Please check browser permissions and ensure camera is available.').show();
-            $('#capture-sku-btn').prop('disabled', true);
-        });
+            .text('Point your camera at the barcode. Scanning automatically...').show();
+    }).catch((error) => {
+        console.error('Error starting barcode scanner:', error);
+        $('#camera-status').removeClass('alert-info alert-success').addClass('alert-danger')
+            .text('Unable to access camera. Please allow camera permissions and ensure a camera is available.').show();
     });
 }
 
 // Function to stop camera scanner
 function stopCameraScanner() {
-    if (cameraStream) {
-        cameraStream.getTracks().forEach(track => track.stop());
-        cameraStream = null;
+    if (barcodeReader) {
+        barcodeReader.reset();
     }
-    
-    const video = document.getElementById('camera-video');
-    if (video && video.srcObject) {
-        video.srcObject = null;
-    }
-    
+
     isScanning = false;
-    $('#capture-sku-btn').prop('disabled', true);
-}
-
-// Function to reset scanner UI
-function resetScannerUI() {
     detectedSku = null;
-    $('#capture-sku-btn').prop('disabled', false);
-    $('#camera-status').removeClass('alert-success alert-danger').addClass('alert-info')
-        .text('Camera started. Point at the SKU text and click "Capture & Scan SKU".').show();
-}
-
-// Function to capture and scan SKU using OCR
-async function captureAndScanSKU() {
-    if (!isScanning || !cameraStream) {
-        return;
-    }
-    
-    const video = document.getElementById('camera-video');
-    const canvas = document.getElementById('camera-canvas');
-    const context = canvas.getContext('2d');
-    
-    // Set canvas dimensions to match video
-    canvas.width = video.videoWidth;
-    canvas.height = video.videoHeight;
-    
-    // Draw video frame to canvas
-    context.drawImage(video, 0, 0, canvas.width, canvas.height);
-    
-    // Disable capture button during processing
-    $('#capture-sku-btn').prop('disabled', true);
-    $('#camera-status').removeClass('alert-info alert-danger').addClass('alert-info')
-        .html('<i class="fas fa-spinner fa-spin me-2"></i>Processing image and extracting SKU text...').show();
-    
-    try {
-        // Use Tesseract.js for OCR
-        const { data: { text } } = await Tesseract.recognize(
-            canvas.toDataURL('image/png'),
-            'eng',
-            {
-                logger: m => {
-                    if (m.status === 'recognizing text') {
-                        $('#camera-status').html(`<i class="fas fa-spinner fa-spin me-2"></i>${m.status}... ${Math.round(m.progress * 100)}%`);
-                    }
-                }
-            }
-        );
-        
-        // Extract potential SKU from text
-        // SKUs are typically alphanumeric with dashes (e.g., ROYU-S1)
-        const cleanedText = text.replace(/\s+/g, '').trim();
-        
-        // Try to find SKU-like patterns (alphanumeric with dashes, usually 3-30 characters)
-        // Look for lines or words that match SKU patterns
-        const lines = text.split(/\r?\n/).map(line => line.trim()).filter(line => line.length > 0);
-        
-        // Look for the most likely SKU (alphanumeric with optional dashes, reasonable length)
-        let potentialSku = cleanedText;
-        
-        // If we have multiple lines, try to find the one that looks most like an SKU
-        if (lines.length > 1) {
-            // Prefer lines that match SKU pattern: letters, dash, alphanumeric (e.g., ROYU-S1)
-            const skuCandidates = lines.filter(line => {
-                const cleaned = line.replace(/\s+/g, '').toUpperCase();
-                // Match pattern: letters, dash, alphanumeric (e.g., ROYU-S1, ABC-123, XYZ-A1B2)
-                const skuPattern = /^[A-Z0-9]+[-_][A-Z0-9]+$/i;
-                const generalPattern = /^[A-Z0-9\-_]+$/i;
-                return (skuPattern.test(cleaned) || generalPattern.test(cleaned)) && cleaned.length >= 3 && cleaned.length <= 30;
-            });
-            
-            if (skuCandidates.length > 0) {
-                // Prefer candidates with dashes (typical SKU format like ROYU-S1)
-                const withDash = skuCandidates.filter(c => c.includes('-') || c.includes('_'));
-                if (withDash.length > 0) {
-                    potentialSku = withDash[0].replace(/\s+/g, '');
-                } else {
-                    // Use the shortest candidate (SKUs are usually concise)
-                    potentialSku = skuCandidates.sort((a, b) => a.length - b.length)[0].replace(/\s+/g, '');
-                }
-            } else {
-                // Use the first non-empty line
-                potentialSku = lines[0].replace(/\s+/g, '');
-            }
-        }
-        
-        // Clean up the SKU - handle common OCR misreads
-        // Replace common OCR errors: 0→O, 1→I, 5→S (but preserve if they're in context)
-        potentialSku = potentialSku.toUpperCase();
-        
-        // Replace common OCR mistakes but preserve dashes and underscores
-        // This preserves the format like ROYU-S1 (letters-dash-alphanumeric)
-        potentialSku = potentialSku.replace(/[^A-Z0-9\-_]/gi, '').trim();
-        
-        if (potentialSku && potentialSku.length >= 2) {
-            const detectedText = potentialSku.toUpperCase();
-
-            // Try exact match from loaded products (product area)
-            let matchedProduct = products.find(p => p.sku.toUpperCase() === detectedText);
-
-            // If not found locally, try server lookup
-            if (!matchedProduct) {
-                try {
-                    const url = '{{ url("/pos/product/sku") }}/' + encodeURIComponent(detectedText);
-                    const response = await $.ajax({
-                        url: url,
-                        method: 'GET',
-                        headers: {
-                            'X-CSRF-TOKEN': $('meta[name="csrf-token"]').attr('content')
-                        }
-                    });
-                    if (response) {
-                        matchedProduct = response;
-                        // Cache it locally for subsequent scans
-                        if (!products.find(p => p.id === matchedProduct.id)) {
-                            products.push(matchedProduct);
-                        }
-                    }
-                } catch (error) {
-                    // ignore, will handle below
-                }
-            }
-
-            // Simple fuzzy fallback against loaded products
-            if (!matchedProduct) {
-                matchedProduct = products.find(p => {
-                    const sku = p.sku.toUpperCase();
-                    return sku.includes(detectedText) || detectedText.includes(sku);
-                });
-            }
-
-            if (matchedProduct) {
-                detectedSku = matchedProduct.sku;
-                $('#camera-status').removeClass('alert-info alert-danger').addClass('alert-success')
-                    .text('SKU found: ' + detectedSku + '. Adding to cart...').show();
-
-                // Stop camera and close modal
-                stopCameraScanner();
-                $('#cameraScannerModal').modal('hide');
-
-                // Automatically process the SKU and add to cart
-                await handleBarcodeOrSkuInput(detectedSku);
-            } else {
-                $('#camera-status').removeClass('alert-info alert-success').addClass('alert-danger')
-                    .html('SKU "' + detectedText + '" not found. Please scan a valid product SKU from the list.').show();
-                $('#capture-sku-btn').prop('disabled', false);
-            }
-        } else {
-            $('#camera-status').removeClass('alert-info alert-success').addClass('alert-danger')
-                .text('Could not detect SKU text. Please try again with better lighting and focus.').show();
-            $('#capture-sku-btn').prop('disabled', false);
-        }
-    } catch (error) {
-        console.error('OCR Error:', error);
-        $('#camera-status').removeClass('alert-info alert-success').addClass('alert-danger')
-            .text('Error processing image. Please try again.').show();
-        $('#capture-sku-btn').prop('disabled', false);
-    }
+    barcodeDetectionLocked = false;
+    $('#camera-status').hide();
 }
 
 // Auto-focus input field when modal is closed (set up once)
