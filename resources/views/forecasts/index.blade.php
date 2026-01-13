@@ -118,14 +118,6 @@
                                    style="font-size: 0.85em; cursor: help;"></i>
                             </th>
                             <th class="text-end">
-                                Forecast Reliability (%)
-                                <i class="fas fa-info-circle text-muted ms-1"
-                                   data-bs-toggle="tooltip"
-                                   data-bs-placement="top"
-                                   data-bs-title="Indicates how reliable the forecast is based on historical data consistency."
-                                   style="font-size: 0.85em; cursor: help;"></i>
-                            </th>
-                            <th class="text-end">
                                 Current Inventory
                                 <i class="fas fa-info-circle text-muted ms-1" 
                                    data-bs-toggle="tooltip" 
@@ -157,8 +149,6 @@
                             $monthForecast = $product->month_forecast ?? 0;
                             $inventoryGap = $product->inventory_gap ?? 0;
                             $reorderRequired = $product->reorder_required ?? false;
-                            // Confidence is an estimated reliability indicator; it does not guarantee accuracy.
-                            $monthReliability = optional($product->demandForecasts->first())->confidence_level;
                         @endphp
                         <tr>
                             <td>
@@ -167,15 +157,6 @@
                             </td>
                             <td>{{ $product->category->name ?? 'N/A' }}</td>
                             <td class="text-end"><span class="badge bg-info">{{ number_format($monthForecast) }}</span></td>
-                            <td class="text-end">
-                                @php
-                                    $r = $monthReliability !== null ? (float) $monthReliability : null;
-                                    $reliabilityClass = $r === null ? 'secondary' : ($r >= 80 ? 'success' : ($r >= 60 ? 'warning' : 'danger'));
-                                @endphp
-                                <span class="badge bg-{{ $reliabilityClass }} text-white">
-                                    {{ $r !== null ? number_format($r, 1) . '%' : 'N/A' }}
-                                </span>
-                            </td>
                             <td class="text-end">{{ number_format($product->quantity) }}</td>
                             <td class="text-end">
                                 <span class="badge bg-{{ $inventoryGap > 0 ? 'danger' : 'success' }}">
@@ -192,7 +173,7 @@
                         </tr>
                         @empty
                         <tr>
-                            <td colspan="7" class="text-center">No forecast data available</td>
+                            <td colspan="6" class="text-center">No forecast data available</td>
                         </tr>
                         @endforelse
                     </tbody>
@@ -221,16 +202,16 @@
     </div>
     @endif
 
-    {{-- Forecasted Demand Trend per Product Line Chart --}}
+    {{-- Forecasted Demand per Product Bar Chart --}}
     @if(isset($forecastPerProductData) && !empty($forecastPerProductData['datasets']))
     <div class="card mt-4">
         <div class="card-header bg-success text-white">
             <h5 class="mb-0">
-                <i class="fas fa-chart-line me-2"></i>
-                Forecasted Demand Trend per Product
+                <i class="fas fa-chart-bar me-2"></i>
+                Forecasted Demand per Product
             </h5>
             <small class="text-white-50">
-                Forecasted demand trends over time for top products in {{ $year }}
+                Top products by forecasted demand for {{ date('F Y', mktime(0, 0, 0, $selectedMonth, 1, $year)) }}
             </small>
         </div>
         <div class="card-body">
@@ -239,16 +220,16 @@
     </div>
     @endif
 
-    {{-- Forecasted Demand vs Inventory Over Time Line Chart --}}
+    {{-- Forecasted Demand vs Inventory Bar Chart --}}
     @if(isset($forecastVsInventoryData) && !empty($forecastVsInventoryData['datasets']))
     <div class="card mt-4">
-        <div class="card-header bg-warning text-white">
-            <h5 class="mb-0 text-white">
-                <i class="fas fa-chart-line me-2"></i>
-                Forecasted Demand vs Inventory Over Time
+        <div class="card-header bg-warning text-dark">
+            <h5 class="mb-0">
+                <i class="fas fa-chart-bar me-2"></i>
+                Forecasted Demand vs Current Inventory
             </h5>
-            <small class="text-white">
-                Forecasted demand trend compared to current inventory level (reference line) for {{ $year }}
+            <small class="text-dark">
+                Comparison of forecasted demand and current inventory levels for {{ date('F Y', mktime(0, 0, 0, $selectedMonth, 1, $year)) }}
             </small>
         </div>
         <div class="card-body">
@@ -455,12 +436,12 @@ if (tableFilterForm) {
     }
 @endif
 
-// Create Forecast Trend per Product line chart
+// Create Forecast per Product bar chart
 @if(isset($forecastPerProductData) && !empty($forecastPerProductData['datasets']))
     const forecastPerProductCtx = document.getElementById('forecastPerProductChart');
     if (forecastPerProductCtx) {
         new Chart(forecastPerProductCtx.getContext('2d'), {
-            type: 'line',
+            type: 'bar',
             data: @json($forecastPerProductData),
             options: {
                 responsive: true,
@@ -468,16 +449,11 @@ if (tableFilterForm) {
                 plugins: {
                     title: {
                         display: true,
-                        text: 'Forecasted Demand Trend per Product',
+                        text: 'Forecasted Demand per Product',
                         font: { size: 16, weight: 'bold' }
                     },
                     legend: {
-                        display: true,
-                        position: 'top'
-                    },
-                    tooltip: {
-                        mode: 'index',
-                        intersect: false
+                        display: false
                     }
                 },
                 scales: {
@@ -492,8 +468,12 @@ if (tableFilterForm) {
                     x: {
                         title: {
                             display: true,
-                            text: 'Month',
+                            text: 'Product',
                             font: { weight: 'bold' }
+                        },
+                        ticks: {
+                            maxRotation: 45,
+                            minRotation: 45
                         }
                     }
                 }
@@ -502,12 +482,12 @@ if (tableFilterForm) {
     }
 @endif
 
-// Create Forecast vs Inventory Over Time line chart
+// Create Forecast vs Inventory bar chart
 @if(isset($forecastVsInventoryData) && !empty($forecastVsInventoryData['datasets']))
     const forecastVsInventoryCtx = document.getElementById('forecastVsInventoryChart');
     if (forecastVsInventoryCtx) {
         new Chart(forecastVsInventoryCtx.getContext('2d'), {
-            type: 'line',
+            type: 'bar',
             data: @json($forecastVsInventoryData),
             options: {
                 responsive: true,
@@ -515,16 +495,12 @@ if (tableFilterForm) {
                 plugins: {
                     title: {
                         display: true,
-                        text: 'Forecasted Demand vs Inventory Over Time',
+                        text: 'Forecasted Demand vs Current Inventory',
                         font: { size: 16, weight: 'bold' }
                     },
                     legend: {
                         display: true,
                         position: 'top'
-                    },
-                    tooltip: {
-                        mode: 'index',
-                        intersect: false
                     }
                 },
                 scales: {
@@ -539,8 +515,12 @@ if (tableFilterForm) {
                     x: {
                         title: {
                             display: true,
-                            text: 'Month',
+                            text: 'Product',
                             font: { weight: 'bold' }
+                        },
+                        ticks: {
+                            maxRotation: 45,
+                            minRotation: 45
                         }
                     }
                 }
