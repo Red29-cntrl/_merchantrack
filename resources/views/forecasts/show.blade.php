@@ -20,7 +20,15 @@
                     <p><strong>Predicted Demand:</strong> <span class="badge bg-primary">{{ $forecast->predicted_demand }}</span></p>
                 </div>
                 <div class="col-md-6">
-                    <p><strong>Confidence Level:</strong> {{ number_format($forecast->confidence_level, 1) }}%</p>
+                    <p>
+                        <strong>Forecast Reliability (Estimated):</strong>
+                        {{ number_format($forecast->confidence_level, 1) }}%
+                        <i class="fas fa-info-circle text-muted ms-1"
+                           data-bs-toggle="tooltip"
+                           data-bs-placement="top"
+                           data-bs-title="Indicates how reliable the forecast is based on historical data consistency."
+                           style="font-size: 0.85em; cursor: help;"></i>
+                    </p>
                     <p><strong>Method:</strong> {{ $forecast->method }}</p>
                     <p><strong>Generated:</strong> {{ $forecast->created_at->setTimezone('Asia/Manila')->format('M d, Y h:i:s A') }}</p>
                 </div>
@@ -56,5 +64,17 @@
         </div>
     </div>
 </div>
+@endsection
+
+@section('scripts')
+<script>
+// Initialize Bootstrap tooltips (confidence is an estimated reliability indicator, not a guarantee)
+document.addEventListener('DOMContentLoaded', function() {
+    var tooltipTriggerList = [].slice.call(document.querySelectorAll('[data-bs-toggle="tooltip"]'));
+    tooltipTriggerList.map(function (tooltipTriggerEl) {
+        return new bootstrap.Tooltip(tooltipTriggerEl);
+    });
+});
+</script>
 @endsection
 
