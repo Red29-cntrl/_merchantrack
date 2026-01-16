@@ -89,15 +89,54 @@ class DemandForecastController extends Controller
             ->paginate(15)
             ->appends($request->query());
 
-        // Get forecast data for graph - separate graphs by category
-        $forecastData = $this->getForecastDataForGraph($year, $selectedMonth, $confidenceMin, $graphCategoryId);
+        // Add inventory gap and reorder calculations to each product
+        foreach ($forecastProducts as $product) {
+            // Get total forecasted demand for the selected month
+            $monthStart = sprintf('%04d-%02d-01', $year, $selectedMonth);
+            $monthForecast = $product->demandForecasts
+                ->filter(function($forecast) use ($monthStart) {
+                    return $forecast->forecast_date->format('Y-m-d') === $monthStart;
+                })
+                ->sum('predicted_demand');
+            
+            // Calculate inventory gap: forecasted_demand - current_quantity
+            $product->inventory_gap = $monthForecast - $product->quantity;
+            
+            // Reorder required if: forecasted_demand > current_quantity OR quantity <= reorder_level
+            $product->reorder_required = ($monthForecast > $product->quantity) || ($product->quantity <= $product->reorder_level);
+            
+            // Store month forecast for display
+            $product->month_forecast = $monthForecast;
+        }
+
+        // Get categories that have sales data (data-driven - only categories with actual sales appear)
+        $categoriesWithSales = $this->getCategoriesWithSalesData();
+        
+        // Get dynamic category trend data (for the selected category or first available)
+        $firstCategory = $categoriesWithSales->first();
+        $selectedCategoryId = $request->get('category_trend', $firstCategory ? $firstCategory->id : null);
+        $categoryTrendData = $selectedCategoryId ? $this->getCategoryTrendData($selectedCategoryId) : null;
+
+        // Get actual vs forecasted data for graphs
+        $actualVsForecastedData = $this->getActualVsForecastedData($year, $selectedMonth, $categoryId);
+        
+        // Get forecasted demand per product (line chart data)
+        $forecastPerProductData = $this->getForecastPerProductData($year, $selectedMonth, $categoryId);
+        
+        // Get forecasted demand vs inventory (line chart data)
+        $forecastVsInventoryData = $this->getForecastVsInventoryData($year, $selectedMonth, $categoryId);
 
         $allProducts = Product::orderBy('name')->get();
         $categories = Category::orderBy('name')->get();
 
         return view('forecasts.index', [
             'forecastProducts' => $forecastProducts,
-            'forecastData' => $forecastData,
+            'actualVsForecastedData' => $actualVsForecastedData,
+            'forecastPerProductData' => $forecastPerProductData,
+            'forecastVsInventoryData' => $forecastVsInventoryData,
+            'categoriesWithSales' => $categoriesWithSales,
+            'categoryTrendData' => $categoryTrendData,
+            'selectedCategoryId' => $selectedCategoryId,
             'year' => $year,
             'selectedMonth' => $selectedMonth,
             'sort' => $sort,
@@ -106,7 +145,6 @@ class DemandForecastController extends Controller
             'categories' => $categories,
             'availableYears' => $availableYears,
             'categoryId' => $categoryId,
-            'graphCategoryId' => $graphCategoryId,
             'confidenceKey' => $confidenceKey,
         ]);
     }
@@ -776,6 +814,439 @@ class DemandForecastController extends Controller
             
             $data['datasets'][] = $dataset;
         }
+        
+        return $data;
+    }
+
+    /**
+     * Get actual vs forecasted monthly demand data for line chart
+     */
+    private function getActualVsForecastedData(int $year, int $month, ?int $categoryFilter = null)
+    {
+        $data = [
+            'labels' => [],
+            'datasets' => []
+        ];
+        
+        // Get actual monthly sales data (from sales table, grouped by month)
+        $actualSales = SaleItem::join('sales', 'sale_items.sale_id', '=', 'sales.id')
+            ->join('products', 'sale_items.product_id', '=', 'products.id')
+            ->when($categoryFilter !== null, function ($q) use ($categoryFilter) {
+                $q->where('products.category_id', $categoryFilter);
+            })
+            ->select(
+                DB::raw('YEAR(sales.created_at) as year'),
+                DB::raw('MONTH(sales.created_at) as month'),
+                DB::raw('DATE_FORMAT(sales.created_at, "%Y-%m") as month_key'),
+                DB::raw('SUM(sale_items.quantity) as total_quantity')
+            )
+            ->groupBy('year', 'month', 'month_key')
+            ->orderBy('year', 'asc')
+            ->orderBy('month', 'asc')
+            ->get();
+        
+        // Get forecasted data (monthly forecasts)
+        $forecasts = DemandForecast::with('product')
+            ->when($categoryFilter !== null, function ($q) use ($categoryFilter) {
+                $q->whereHas('product', function($query) use ($categoryFilter) {
+                    $query->where('category_id', $categoryFilter);
+                });
+            })
+            ->select(
+                DB::raw('YEAR(forecast_date) as year'),
+                DB::raw('MONTH(forecast_date) as month'),
+                DB::raw('DATE_FORMAT(forecast_date, "%Y-%m") as month_key'),
+                DB::raw('SUM(predicted_demand) as total_demand')
+            )
+            ->groupBy('year', 'month', 'month_key')
+            ->orderBy('year', 'asc')
+            ->orderBy('month', 'asc')
+            ->get();
+        
+        // Combine and create labels (last 12 months + forecast months)
+        $allMonths = [];
+        foreach ($actualSales as $sale) {
+            $monthKey = $sale->month_key;
+            $allMonths[$monthKey] = date('M Y', strtotime($monthKey . '-01'));
+        }
+        foreach ($forecasts as $forecast) {
+            $monthKey = $forecast->month_key;
+            if (!isset($allMonths[$monthKey])) {
+                $allMonths[$monthKey] = date('M Y', strtotime($monthKey . '-01'));
+            }
+        }
+        ksort($allMonths);
+        // Limit to last 12 months of actual + all forecasts
+        $allMonthsArray = array_slice($allMonths, -12, null, true);
+        foreach ($forecasts as $forecast) {
+            $monthKey = $forecast->month_key;
+            if (!isset($allMonthsArray[$monthKey])) {
+                $allMonthsArray[$monthKey] = date('M Y', strtotime($monthKey . '-01'));
+            }
+        }
+        ksort($allMonthsArray);
+        $data['labels'] = array_values($allMonthsArray);
+        
+        // Build actual sales dataset
+        $actualData = [];
+        foreach ($allMonthsArray as $monthKey => $label) {
+            $sale = $actualSales->first(function($item) use ($monthKey) {
+                return $item->month_key === $monthKey;
+            });
+            $actualData[] = $sale ? (float) $sale->total_quantity : null;
+        }
+        
+        // Build forecasted dataset
+        $forecastData = [];
+        foreach ($allMonthsArray as $monthKey => $label) {
+            $forecast = $forecasts->first(function($item) use ($monthKey) {
+                return $item->month_key === $monthKey;
+            });
+            $forecastData[] = $forecast ? (float) $forecast->total_demand : null;
+        }
+        
+        $data['datasets'] = [
+            [
+                'label' => 'Actual Demand',
+                'data' => $actualData,
+                'borderColor' => 'rgb(54, 162, 235)',
+                'backgroundColor' => 'rgba(54, 162, 235, 0.1)',
+                'tension' => 0.4,
+                'spanGaps' => true
+            ],
+            [
+                'label' => 'Forecasted Demand',
+                'data' => $forecastData,
+                'borderColor' => 'rgb(255, 99, 132)',
+                'backgroundColor' => 'rgba(255, 99, 132, 0.1)',
+                'borderDash' => [5, 5],
+                'tension' => 0.4,
+                'spanGaps' => true
+            ]
+        ];
+        
+        return $data;
+    }
+    
+    /**
+     * Get forecasted demand trend per product data for line chart
+     * Shows forecasted demand over time (months) for top products
+     */
+    private function getForecastPerProductData(int $year, int $month, ?int $categoryFilter = null)
+    {
+        $data = [
+            'labels' => [],
+            'datasets' => []
+        ];
+        
+        // Get all forecast months for the selected year
+        $forecastMonths = DemandForecast::whereYear('forecast_date', $year)
+            ->select(DB::raw('DISTINCT MONTH(forecast_date) as month'))
+            ->orderBy('month', 'asc')
+            ->pluck('month')
+            ->toArray();
+        
+        if (empty($forecastMonths)) {
+            return $data;
+        }
+        
+        // Create month labels
+        $monthLabels = [];
+        foreach ($forecastMonths as $m) {
+            $monthLabels[] = date('M Y', mktime(0, 0, 0, $m, 1, $year));
+        }
+        $data['labels'] = $monthLabels;
+        
+        // Get top products by total forecasted demand for the selected year
+        $topProducts = DemandForecast::with('product')
+            ->whereYear('forecast_date', $year)
+            ->when($categoryFilter !== null, function ($q) use ($categoryFilter) {
+                $q->whereHas('product', function($query) use ($categoryFilter) {
+                    $query->where('category_id', $categoryFilter);
+                });
+            })
+            ->select('product_id', DB::raw('SUM(predicted_demand) as total_demand'))
+            ->groupBy('product_id')
+            ->orderBy('total_demand', 'desc')
+            ->limit(10) // Limit to top 10 products to avoid clutter
+            ->get();
+        
+        if ($topProducts->isEmpty()) {
+            return $data;
+        }
+        
+        // Generate color palette for products
+        $colors = [
+            ['border' => 'rgb(75, 192, 192)', 'bg' => 'rgba(75, 192, 192, 0.1)'],
+            ['border' => 'rgb(255, 99, 132)', 'bg' => 'rgba(255, 99, 132, 0.1)'],
+            ['border' => 'rgb(54, 162, 235)', 'bg' => 'rgba(54, 162, 235, 0.1)'],
+            ['border' => 'rgb(255, 206, 86)', 'bg' => 'rgba(255, 206, 86, 0.1)'],
+            ['border' => 'rgb(153, 102, 255)', 'bg' => 'rgba(153, 102, 255, 0.1)'],
+            ['border' => 'rgb(255, 159, 64)', 'bg' => 'rgba(255, 159, 64, 0.1)'],
+            ['border' => 'rgb(199, 199, 199)', 'bg' => 'rgba(199, 199, 199, 0.1)'],
+            ['border' => 'rgb(83, 102, 255)', 'bg' => 'rgba(83, 102, 255, 0.1)'],
+            ['border' => 'rgb(99, 255, 132)', 'bg' => 'rgba(99, 255, 132, 0.1)'],
+            ['border' => 'rgb(255, 99, 255)', 'bg' => 'rgba(255, 99, 255, 0.1)'],
+        ];
+        
+        $colorIndex = 0;
+        
+        // Build dataset for each product
+        foreach ($topProducts as $productForecast) {
+            if (!$productForecast->product) {
+                continue;
+            }
+            
+            $productData = [];
+            
+            // Get forecasted demand for each month
+            foreach ($forecastMonths as $m) {
+                $monthForecast = DemandForecast::where('product_id', $productForecast->product_id)
+                    ->whereYear('forecast_date', $year)
+                    ->whereMonth('forecast_date', $m)
+                    ->sum('predicted_demand');
+                
+                $productData[] = (float) $monthForecast;
+            }
+            
+            $color = $colors[$colorIndex % count($colors)];
+            $colorIndex++;
+            
+            $data['datasets'][] = [
+                'label' => $productForecast->product->name,
+                'data' => $productData,
+                'borderColor' => $color['border'],
+                'backgroundColor' => $color['bg'],
+                'tension' => 0.4,
+                'fill' => false
+            ];
+        }
+        
+        return $data;
+    }
+    
+    /**
+     * Get forecasted demand vs inventory over time data for line chart
+     * Shows forecasted demand trend and current inventory (constant reference line) over months
+     */
+    private function getForecastVsInventoryData(int $year, int $month, ?int $categoryFilter = null)
+    {
+        $data = [
+            'labels' => [],
+            'datasets' => []
+        ];
+        
+        // Get all forecast months for the selected year
+        $forecastMonths = DemandForecast::whereYear('forecast_date', $year)
+            ->select(DB::raw('DISTINCT MONTH(forecast_date) as month'))
+            ->orderBy('month', 'asc')
+            ->pluck('month')
+            ->toArray();
+        
+        if (empty($forecastMonths)) {
+            return $data;
+        }
+        
+        // Create month labels
+        $monthLabels = [];
+        foreach ($forecastMonths as $m) {
+            $monthLabels[] = date('M Y', mktime(0, 0, 0, $m, 1, $year));
+        }
+        $data['labels'] = $monthLabels;
+        
+        // Get products with forecasts for the selected year
+        $products = Product::with(['demandForecasts' => function ($q) use ($year) {
+                $q->whereYear('forecast_date', $year);
+            }])
+            ->when($categoryFilter !== null, function ($q) use ($categoryFilter) {
+                $q->where('category_id', $categoryFilter);
+            })
+            ->whereHas('demandForecasts', function ($q) use ($year) {
+                $q->whereYear('forecast_date', $year);
+            })
+            ->orderBy('name')
+            ->limit(1) // Show aggregate for all products (or single product if filtered)
+            ->get();
+        
+        if ($products->isEmpty()) {
+            return $data;
+        }
+        
+        // Aggregate forecasted demand across all products for each month
+        $forecastData = [];
+        $inventoryValue = 0;
+        
+        foreach ($forecastMonths as $m) {
+            $monthForecast = DemandForecast::when($categoryFilter !== null, function ($q) use ($categoryFilter) {
+                    $q->whereHas('product', function($query) use ($categoryFilter) {
+                        $query->where('category_id', $categoryFilter);
+                    });
+                })
+                ->whereYear('forecast_date', $year)
+                ->whereMonth('forecast_date', $m)
+                ->sum('predicted_demand');
+            
+            $forecastData[] = (float) $monthForecast;
+        }
+        
+        // Get average inventory (constant reference line)
+        foreach ($products as $product) {
+            $inventoryValue += (float) $product->quantity;
+        }
+        $inventoryValue = $inventoryValue / count($products);
+        
+        // Create constant inventory line (same value for all months)
+        $inventoryData = array_fill(0, count($forecastMonths), $inventoryValue);
+        
+        $data['datasets'] = [
+            [
+                'label' => 'Forecasted Demand',
+                'data' => $forecastData,
+                'borderColor' => 'rgb(255, 99, 132)',
+                'backgroundColor' => 'rgba(255, 99, 132, 0.1)',
+                'tension' => 0.4,
+                'fill' => false
+            ],
+            [
+                'label' => 'Current Inventory (Reference)',
+                'data' => $inventoryData,
+                'borderColor' => 'rgb(54, 162, 235)',
+                'backgroundColor' => 'rgba(54, 162, 235, 0.1)',
+                'borderDash' => [5, 5],
+                'tension' => 0,
+                'fill' => false
+            ]
+        ];
+        
+        return $data;
+    }
+    
+    /**
+     * Get categories that have sales data (data-driven - only categories with actual sales appear)
+     * This ensures categories without sales data don't appear in the selector
+     */
+    private function getCategoriesWithSalesData()
+    {
+        // Get categories that have at least one sale_item record
+        // This is data-driven: categories only appear if they have sales
+        return Category::whereHas('products', function($query) {
+                $query->whereHas('saleItems');
+            })
+            ->orderBy('name')
+            ->get();
+    }
+    
+    /**
+     * Get category trend data (Actual vs Forecasted Monthly Demand for a specific category)
+     * Data-driven: only works with categories that have sales data
+     */
+    private function getCategoryTrendData(int $categoryId)
+    {
+        $data = [
+            'labels' => [],
+            'datasets' => [],
+            'category_id' => $categoryId
+        ];
+        
+        // Get category name
+        $category = Category::find($categoryId);
+        if (!$category) {
+            return $data;
+        }
+        $data['category_name'] = $category->name;
+        
+        // Get actual monthly sales data for this category (from sales table, grouped by month)
+        $actualSales = SaleItem::join('sales', 'sale_items.sale_id', '=', 'sales.id')
+            ->join('products', 'sale_items.product_id', '=', 'products.id')
+            ->where('products.category_id', $categoryId)
+            ->select(
+                DB::raw('YEAR(sales.created_at) as year'),
+                DB::raw('MONTH(sales.created_at) as month'),
+                DB::raw('DATE_FORMAT(sales.created_at, "%Y-%m") as month_key'),
+                DB::raw('SUM(sale_items.quantity) as total_quantity')
+            )
+            ->groupBy('year', 'month', 'month_key')
+            ->orderBy('year', 'asc')
+            ->orderBy('month', 'asc')
+            ->get();
+        
+        // Get forecasted data for this category (monthly forecasts)
+        $forecasts = DemandForecast::with('product')
+            ->whereHas('product', function($query) use ($categoryId) {
+                $query->where('category_id', $categoryId);
+            })
+            ->select(
+                DB::raw('YEAR(forecast_date) as year'),
+                DB::raw('MONTH(forecast_date) as month'),
+                DB::raw('DATE_FORMAT(forecast_date, "%Y-%m") as month_key'),
+                DB::raw('SUM(predicted_demand) as total_demand')
+            )
+            ->groupBy('year', 'month', 'month_key')
+            ->orderBy('year', 'asc')
+            ->orderBy('month', 'asc')
+            ->get();
+        
+        // Combine and create labels (last 12 months of actual + all forecasts)
+        $allMonths = [];
+        foreach ($actualSales as $sale) {
+            $monthKey = $sale->month_key;
+            $allMonths[$monthKey] = date('M Y', strtotime($monthKey . '-01'));
+        }
+        foreach ($forecasts as $forecast) {
+            $monthKey = $forecast->month_key;
+            if (!isset($allMonths[$monthKey])) {
+                $allMonths[$monthKey] = date('M Y', strtotime($monthKey . '-01'));
+            }
+        }
+        ksort($allMonths);
+        // Limit to last 12 months of actual + all forecasts
+        $allMonthsArray = array_slice($allMonths, -12, null, true);
+        foreach ($forecasts as $forecast) {
+            $monthKey = $forecast->month_key;
+            if (!isset($allMonthsArray[$monthKey])) {
+                $allMonthsArray[$monthKey] = date('M Y', strtotime($monthKey . '-01'));
+            }
+        }
+        ksort($allMonthsArray);
+        $data['labels'] = array_values($allMonthsArray);
+        
+        // Build actual sales dataset
+        $actualData = [];
+        foreach ($allMonthsArray as $monthKey => $label) {
+            $sale = $actualSales->first(function($item) use ($monthKey) {
+                return $item->month_key === $monthKey;
+            });
+            $actualData[] = $sale ? (float) $sale->total_quantity : null;
+        }
+        
+        // Build forecasted dataset
+        $forecastData = [];
+        foreach ($allMonthsArray as $monthKey => $label) {
+            $forecast = $forecasts->first(function($item) use ($monthKey) {
+                return $item->month_key === $monthKey;
+            });
+            $forecastData[] = $forecast ? (float) $forecast->total_demand : null;
+        }
+        
+        $data['datasets'] = [
+            [
+                'label' => 'Actual Demand',
+                'data' => $actualData,
+                'borderColor' => 'rgb(54, 162, 235)',
+                'backgroundColor' => 'rgba(54, 162, 235, 0.1)',
+                'tension' => 0.4,
+                'spanGaps' => true
+            ],
+            [
+                'label' => 'Forecasted Demand',
+                'data' => $forecastData,
+                'borderColor' => 'rgb(255, 99, 132)',
+                'backgroundColor' => 'rgba(255, 99, 132, 0.1)',
+                'borderDash' => [5, 5],
+                'tension' => 0.4,
+                'spanGaps' => true
+            ]
+        ];
         
         return $data;
     }
