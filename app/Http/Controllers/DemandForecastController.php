@@ -92,7 +92,6 @@ class DemandForecastController extends Controller
         // Add inventory gap and reorder calculations to each product
         foreach ($forecastProducts as $product) {
             // Get total forecasted demand for the selected month
-            // Forecasts are stored with first day of month (YYYY-MM-01)
             $monthStart = sprintf('%04d-%02d-01', $year, $selectedMonth);
             $monthForecast = $product->demandForecasts
                 ->filter(function($forecast) use ($monthStart) {
@@ -119,13 +118,13 @@ class DemandForecastController extends Controller
         $categoryTrendData = $selectedCategoryId ? $this->getCategoryTrendData($selectedCategoryId) : null;
 
         // Get actual vs forecasted data for graphs
-        $actualVsForecastedData = $this->getActualVsForecastedData($year, $selectedMonth, null);
+        $actualVsForecastedData = $this->getActualVsForecastedData($year, $selectedMonth, $categoryId);
         
-        // Get forecasted demand per product (bar chart data)
-        $forecastPerProductData = $this->getForecastPerProductData($year, $selectedMonth, null);
+        // Get forecasted demand per product (line chart data)
+        $forecastPerProductData = $this->getForecastPerProductData($year, $selectedMonth, $categoryId);
         
-        // Get forecasted demand vs inventory (bar chart data)
-        $forecastVsInventoryData = $this->getForecastVsInventoryData($year, $selectedMonth, null);
+        // Get forecasted demand vs inventory (line chart data)
+        $forecastVsInventoryData = $this->getForecastVsInventoryData($year, $selectedMonth, $categoryId);
 
         $allProducts = Product::orderBy('name')->get();
         $categories = Category::orderBy('name')->get();
@@ -151,337 +150,145 @@ class DemandForecastController extends Controller
     }
 
     /**
-     * Generate demand forecasts using Prophet-like time-series forecasting
-     * Uses monthly aggregation from sales data only (sales.created_at)
-     * Implements additive model: y(t) = trend(t) + seasonality(t) + noise
+     * Generate demand forecasts using Trend Projection Method
+     * Uses linear regression to calculate trend and project future demand
      */
     private function generateForecastUsingTrendProjection()
     {
         $products = Product::where('is_active', true)->get();
         $forecastYear = 2026; // Forecast for 2026
-        $forecastHorizon = 12; // Forecast 12 months ahead
         
         $forecastCount = 0;
         
         foreach ($products as $product) {
-            // Get historical monthly demand from sales data only
-            // Use sales.created_at for grouping (not sale_items.created_at)
-            $monthlyDemand = SaleItem::join('sales', 'sale_items.sale_id', '=', 'sales.id')
-                ->where('sale_items.product_id', $product->id)
+            // Get historical sales data aggregated by date
+            $historicalSales = SaleItem::where('product_id', $product->id)
                 ->select(
-                    DB::raw('YEAR(sales.created_at) as year'),
-                    DB::raw('MONTH(sales.created_at) as month'),
-                    DB::raw('DATE_FORMAT(sales.created_at, "%Y-%m-01") as month_start'),
-                    DB::raw('SUM(sale_items.quantity) as total_quantity')
+                    DB::raw('DATE(created_at) as date'),
+                    DB::raw('SUM(quantity) as total')
                 )
-                ->groupBy('year', 'month', 'month_start')
-                ->orderBy('year', 'asc')
-                ->orderBy('month', 'asc')
+                ->groupBy('date')
+                ->orderBy('date', 'asc')
                 ->get();
             
-            // Need at least 3 months of data for forecasting
-            if ($monthlyDemand->count() < 3) {
+            // Get historical inventory "out" movements aggregated by date
+            $historicalOutMovements = InventoryMovement::where('product_id', $product->id)
+                ->where('type', 'out')
+                ->select(
+                    DB::raw('DATE(created_at) as date'),
+                    DB::raw('SUM(quantity) as total')
+                )
+                ->groupBy('date')
+                ->orderBy('date', 'asc')
+                ->get();
+            
+            // Combine sales and inventory movements by date
+            $dailyDemand = [];
+            foreach ($historicalSales as $sale) {
+                $date = $sale->date;
+                $dailyDemand[$date] = ($dailyDemand[$date] ?? 0) + $sale->total;
+            }
+            
+            foreach ($historicalOutMovements as $movement) {
+                $date = $movement->date;
+                $dailyDemand[$date] = ($dailyDemand[$date] ?? 0) + $movement->total;
+            }
+            
+            // Need at least 7 data points for trend calculation
+            if (count($dailyDemand) < 7) {
                 continue;
             }
             
-            // Prepare time series data for Prophet-like forecasting
+            // Prepare data for linear regression: time (days since first date) vs demand
+            $firstDate = min(array_keys($dailyDemand));
+            $firstTimestamp = strtotime($firstDate);
             $timeSeries = [];
-            foreach ($monthlyDemand as $record) {
+            
+            foreach ($dailyDemand as $date => $demand) {
+                $daysSinceStart = (strtotime($date) - $firstTimestamp) / 86400; // Convert to days
                 $timeSeries[] = [
-                    'ds' => $record->month_start, // Date string (Prophet format)
-                    'y' => (float) $record->total_quantity // Demand value
+                    'x' => $daysSinceStart,
+                    'y' => $demand
                 ];
             }
             
-            // Train Prophet-like model and generate forecasts
-            $forecasts = $this->forecastWithProphetLikeModel($timeSeries, $forecastHorizon, $forecastYear);
+            // Calculate linear regression (trend line): y = a + bx
+            // b = slope, a = intercept
+            $trend = $this->calculateLinearRegression($timeSeries);
             
-            if (empty($forecasts)) {
-                continue;
+            if ($trend === null) {
+                continue; // Skip if regression failed
             }
             
-            // Store monthly forecasts (first day of each month)
-            foreach ($forecasts as $forecast) {
-                $forecastDate = $forecast['ds'];
+            $slope = $trend['slope']; // Daily trend (units per day)
+            $intercept = $trend['intercept'];
+            $rSquared = $trend['r_squared']; // Goodness of fit (0-1)
+            
+            // Calculate base date for forecast (first day of forecast year)
+            $forecastStartDate = $forecastYear . '-01-01';
+            $forecastStartTimestamp = strtotime($forecastStartDate);
+            $daysToForecastStart = ($forecastStartTimestamp - $firstTimestamp) / 86400;
+            
+            // Generate forecasts for each day in 2026
+            for ($month = 1; $month <= 12; $month++) {
+                $daysInMonth = cal_days_in_month(CAL_GREGORIAN, $month, $forecastYear);
                 
-                // Check if forecast already exists
-                $existing = DemandForecast::where('product_id', $product->id)
-                    ->where('forecast_date', $forecastDate)
-                    ->first();
-                
-                if (!$existing) {
-                    DemandForecast::create([
-                        'product_id' => $product->id,
-                        'forecast_date' => $forecastDate,
-                        'predicted_demand' => (int) round($forecast['yhat']),
-                        'confidence_level' => $forecast['confidence'],
-                        'method' => 'Prophet-like Time-Series Forecasting',
-                        'historical_data' => [
-                            'historical_months' => count($timeSeries),
-                            'trend' => $forecast['trend'],
-                            'seasonality' => $forecast['seasonality'],
-                            'yhat_lower' => isset($forecast['yhat_lower']) ? round($forecast['yhat_lower']) : null,
-                            'yhat_upper' => isset($forecast['yhat_upper']) ? round($forecast['yhat_upper']) : null,
-                        ],
-                    ]);
+                for ($day = 1; $day <= $daysInMonth; $day++) {
+                    $forecastDate = $forecastYear . "-" . str_pad($month, 2, '0', STR_PAD_LEFT) . "-" . str_pad($day, 2, '0', STR_PAD_LEFT);
                     
-                    $forecastCount++;
+                    $existing = DemandForecast::where('product_id', $product->id)
+                        ->where('forecast_date', $forecastDate)
+                        ->first();
+                    
+                    if (!$existing) {
+                        // Calculate days from first historical date to forecast date
+                        $forecastTimestamp = strtotime($forecastDate);
+                        $daysFromStart = ($forecastTimestamp - $firstTimestamp) / 86400;
+                        
+                        // Project demand using trend line: y = intercept + slope * x
+                        $baseProjection = $intercept + ($slope * $daysFromStart);
+                        
+                        // Apply seasonal adjustment based on month (use historical monthly pattern)
+                        $monthlyPattern = $this->getMonthlyPattern($dailyDemand, $month);
+                        $seasonalFactor = $monthlyPattern > 0 ? $monthlyPattern : 1.0;
+                        
+                        // Apply weekend adjustment
+                        $dayOfWeek = date('w', strtotime($forecastDate));
+                        $weekendFactor = ($dayOfWeek == 0 || $dayOfWeek == 6) ? 0.85 : 1.0;
+                        
+                        // Final prediction with trend, seasonal, and weekend adjustments
+                        $predicted = max(1, round($baseProjection * $seasonalFactor * $weekendFactor));
+                        
+                        // Confidence based on R-squared and data points
+                        $dataPoints = count($dailyDemand);
+                        $baseConfidence = min(90, 50 + ($rSquared * 30)); // R² contributes up to 30%
+                        $dataConfidence = min(10, $dataPoints / 10); // Data points contribute up to 10%
+                        $confidence = min(95, round($baseConfidence + $dataConfidence, 1));
+                        
+                        DemandForecast::create([
+                            'product_id' => $product->id,
+                            'forecast_date' => $forecastDate,
+                            'predicted_demand' => $predicted,
+                            'confidence_level' => $confidence,
+                            'method' => 'Trend Projection Method (Linear Regression)',
+                            'historical_data' => [
+                                'slope' => round($slope, 4),
+                                'intercept' => round($intercept, 2),
+                                'r_squared' => round($rSquared, 4),
+                                'data_points' => $dataPoints,
+                                'trend_direction' => $slope > 0 ? 'increasing' : ($slope < 0 ? 'decreasing' : 'stable')
+                            ],
+                        ]);
+                        
+                        $forecastCount++;
+                    }
                 }
             }
         }
         
         if ($forecastCount > 0) {
-            \Log::info("Generated {$forecastCount} monthly demand forecasts using Prophet-like Time-Series Forecasting.");
+            \Log::info("Generated {$forecastCount} demand forecasts using Trend Projection Method (Linear Regression).");
         }
-    }
-    
-    /**
-     * Prophet-like forecasting model (additive: y = trend + seasonality)
-     * @param array $timeSeries Historical data [['ds' => 'YYYY-MM-DD', 'y' => value], ...]
-     * @param int $horizon Number of months to forecast
-     * @param int $forecastYear Year to forecast
-     * @return array Forecasts [['ds' => 'YYYY-MM-01', 'yhat' => value, 'confidence' => %, ...], ...]
-     */
-    private function forecastWithProphetLikeModel($timeSeries, $horizon, $forecastYear)
-    {
-        if (count($timeSeries) < 3) {
-            return [];
-        }
-        
-        // Convert dates to timestamps for calculations
-        $data = [];
-        foreach ($timeSeries as $point) {
-            $timestamp = strtotime($point['ds']);
-            $data[] = [
-                't' => $timestamp,
-                'y' => $point['y'],
-                'month' => (int) date('n', $timestamp),
-            ];
-        }
-        
-        // Calculate trend using linear regression
-        $trend = $this->calculateTrend($data);
-        if ($trend === null) {
-            return [];
-        }
-        
-        // Calculate monthly seasonality (average deviation per month)
-        $seasonality = $this->calculateMonthlySeasonality($data, $trend);
-        
-        // Calculate confidence based on historical fit
-        $confidence = $this->calculateConfidence($data, $trend, $seasonality);
-        
-        // Generate forecasts
-        $forecasts = [];
-        $lastTimestamp = max(array_column($data, 't'));
-        
-        for ($month = 1; $month <= $horizon; $month++) {
-            // Calculate target month
-            $targetMonth = $month;
-            $targetYear = $forecastYear;
-            
-            // Handle year rollover
-            if ($targetMonth > 12) {
-                $targetYear += floor(($targetMonth - 1) / 12);
-                $targetMonth = (($targetMonth - 1) % 12) + 1;
-            }
-            
-            $forecastDate = sprintf('%04d-%02d-01', $targetYear, $targetMonth);
-            $forecastTimestamp = strtotime($forecastDate);
-            
-            // Calculate month index from start of data
-            $dataCount = $trend['data_count'];
-            $monthIndex = $dataCount + ($month - 1); // Continue from last data point
-            
-            // Forecast: trend + seasonality
-            // Trend is per month, so use month index directly
-            $trendValue = $trend['intercept'] + ($trend['slope'] * $monthIndex);
-            $seasonalValue = isset($seasonality[$targetMonth]) ? $seasonality[$targetMonth] : 0;
-            $yhat = max(0, $trendValue + $seasonalValue);
-            
-            // Calculate uncertainty intervals (simplified)
-            $stdDev = $this->calculateStandardDeviation($data, $trend, $seasonality);
-            $yhat_lower = max(0, $yhat - (1.96 * $stdDev)); // 95% confidence interval
-            $yhat_upper = $yhat + (1.96 * $stdDev);
-            
-            $forecasts[] = [
-                'ds' => $forecastDate,
-                'yhat' => $yhat,
-                'yhat_lower' => $yhat_lower,
-                'yhat_upper' => $yhat_upper,
-                'trend' => $trendValue,
-                'seasonality' => $seasonalValue,
-                'confidence' => $confidence,
-            ];
-        }
-        
-        return $forecasts;
-    }
-    
-    /**
-     * Calculate trend component using linear regression
-     * Uses month index (0, 1, 2, ...) for numerical stability
-     */
-    private function calculateTrend($data)
-    {
-        if (count($data) < 2) {
-            return null;
-        }
-        
-        // Sort by timestamp
-        usort($data, function($a, $b) {
-            return $a['t'] <=> $b['t'];
-        });
-        
-        // Use month index (0, 1, 2, ...) for regression
-        $n = count($data);
-        $sumX = 0;
-        $sumY = 0;
-        $sumXY = 0;
-        $sumX2 = 0;
-        
-        foreach ($data as $index => $point) {
-            $x = $index; // Month index
-            $y = $point['y'];
-            
-            $sumX += $x;
-            $sumY += $y;
-            $sumXY += $x * $y;
-            $sumX2 += $x * $x;
-        }
-        
-        $denominator = ($n * $sumX2) - ($sumX * $sumX);
-        if ($denominator == 0) {
-            return null;
-        }
-        
-        $slope = (($n * $sumXY) - ($sumX * $sumY)) / $denominator;
-        $meanX = $sumX / $n;
-        $meanY = $sumY / $n;
-        $intercept = $meanY - ($slope * $meanX);
-        
-        return [
-            'slope' => $slope, // Per month
-            'intercept' => $intercept,
-            'data_count' => $n,
-        ];
-    }
-    
-    /**
-     * Calculate monthly seasonality (average deviation from trend per month)
-     */
-    private function calculateMonthlySeasonality($data, $trend)
-    {
-        // Sort data by timestamp to get correct indices
-        usort($data, function($a, $b) {
-            return $a['t'] <=> $b['t'];
-        });
-        
-        $monthlyDeviations = [];
-        $monthlyCounts = [];
-        
-        foreach ($data as $index => $point) {
-            $month = $point['month'];
-            // Use month index (0, 1, 2, ...) for trend calculation
-            $expected = $trend['intercept'] + ($trend['slope'] * $index);
-            $deviation = $point['y'] - $expected;
-            
-            if (!isset($monthlyDeviations[$month])) {
-                $monthlyDeviations[$month] = 0;
-                $monthlyCounts[$month] = 0;
-            }
-            
-            $monthlyDeviations[$month] += $deviation;
-            $monthlyCounts[$month]++;
-        }
-        
-        // Average deviations per month
-        $seasonality = [];
-        for ($month = 1; $month <= 12; $month++) {
-            if (isset($monthlyCounts[$month]) && $monthlyCounts[$month] > 0) {
-                $seasonality[$month] = $monthlyDeviations[$month] / $monthlyCounts[$month];
-            } else {
-                $seasonality[$month] = 0;
-            }
-        }
-        
-        // Normalize seasonality (mean should be ~0)
-        $meanSeasonality = array_sum($seasonality) / 12;
-        foreach ($seasonality as $month => $value) {
-            $seasonality[$month] -= $meanSeasonality;
-        }
-        
-        return $seasonality;
-    }
-    
-    /**
-     * Calculate confidence level based on model fit
-     */
-    private function calculateConfidence($data, $trend, $seasonality)
-    {
-        // Sort data by timestamp to get correct indices
-        usort($data, function($a, $b) {
-            return $a['t'] <=> $b['t'];
-        });
-        
-        // Calculate R-squared
-        $meanY = array_sum(array_column($data, 'y')) / count($data);
-        $ssTot = 0;
-        $ssRes = 0;
-        
-        foreach ($data as $index => $point) {
-            // Use month index (0, 1, 2, ...) for trend calculation
-            $expected = $trend['intercept'] + ($trend['slope'] * $index);
-            $seasonal = isset($seasonality[$point['month']]) ? $seasonality[$point['month']] : 0;
-            $predicted = $expected + $seasonal;
-            
-            $ssTot += pow($point['y'] - $meanY, 2);
-            $ssRes += pow($point['y'] - $predicted, 2);
-        }
-        
-        $rSquared = $ssTot > 0 ? 1 - ($ssRes / $ssTot) : 0;
-        $rSquared = max(0, min(1, $rSquared));
-        
-        // Confidence based on R² and data points
-        $dataPoints = count($data);
-        $baseConfidence = 50 + ($rSquared * 40); // R² contributes up to 40%
-        $dataConfidence = min(10, $dataPoints / 2); // Data points contribute up to 10%
-        
-        return min(95, round($baseConfidence + $dataConfidence, 1));
-    }
-    
-    /**
-     * Calculate standard deviation of residuals
-     */
-    private function calculateStandardDeviation($data, $trend, $seasonality)
-    {
-        // Sort data by timestamp to get correct indices
-        usort($data, function($a, $b) {
-            return $a['t'] <=> $b['t'];
-        });
-        
-        $residuals = [];
-        
-        foreach ($data as $index => $point) {
-            // Use month index (0, 1, 2, ...) for trend calculation
-            $expected = $trend['intercept'] + ($trend['slope'] * $index);
-            $seasonal = isset($seasonality[$point['month']]) ? $seasonality[$point['month']] : 0;
-            $predicted = $expected + $seasonal;
-            $residuals[] = $point['y'] - $predicted;
-        }
-        
-        if (count($residuals) < 2) {
-            return 0;
-        }
-        
-        $mean = array_sum($residuals) / count($residuals);
-        $variance = 0;
-        foreach ($residuals as $residual) {
-            $variance += pow($residual - $mean, 2);
-        }
-        $variance /= (count($residuals) - 1);
-        
-        return sqrt($variance);
     }
     
     /**
@@ -548,6 +355,40 @@ class DemandForecastController extends Controller
         ];
     }
     
+    /**
+     * Get seasonal pattern for a specific month based on historical data
+     * Returns average demand for that month relative to overall average
+     */
+    private function getMonthlyPattern($dailyDemand, $targetMonth)
+    {
+        $monthlyTotals = [];
+        $overallTotal = 0;
+        $overallCount = 0;
+        
+        foreach ($dailyDemand as $date => $demand) {
+            $month = (int)date('n', strtotime($date));
+            if (!isset($monthlyTotals[$month])) {
+                $monthlyTotals[$month] = ['sum' => 0, 'count' => 0];
+            }
+            $monthlyTotals[$month]['sum'] += $demand;
+            $monthlyTotals[$month]['count']++;
+            $overallTotal += $demand;
+            $overallCount++;
+        }
+        
+        if ($overallCount == 0) {
+            return 1.0;
+        }
+        
+        $overallAvg = $overallTotal / $overallCount;
+        
+        if (isset($monthlyTotals[$targetMonth]) && $monthlyTotals[$targetMonth]['count'] > 0) {
+            $monthAvg = $monthlyTotals[$targetMonth]['sum'] / $monthlyTotals[$targetMonth]['count'];
+            return $overallAvg > 0 ? $monthAvg / $overallAvg : 1.0;
+        }
+        
+        return 1.0; // Default: no seasonal adjustment
+    }
 
     /**
      * Get forecast data formatted for graph - creates separate graphs for each category
@@ -1088,7 +929,8 @@ class DemandForecastController extends Controller
     }
     
     /**
-     * Get forecasted demand per product data for bar chart
+     * Get forecasted demand trend per product data for line chart
+     * Shows forecasted demand over time (months) for top products
      */
     private function getForecastPerProductData(int $year, int $month, ?int $categoryFilter = null)
     {
@@ -1097,10 +939,27 @@ class DemandForecastController extends Controller
             'datasets' => []
         ];
         
-        // Get forecasted demand per product for the selected month
-        $forecasts = DemandForecast::with('product')
+        // Get all forecast months for the selected year
+        $forecastMonths = DemandForecast::whereYear('forecast_date', $year)
+            ->select(DB::raw('DISTINCT MONTH(forecast_date) as month'))
+            ->orderBy('month', 'asc')
+            ->pluck('month')
+            ->toArray();
+        
+        if (empty($forecastMonths)) {
+            return $data;
+        }
+        
+        // Create month labels
+        $monthLabels = [];
+        foreach ($forecastMonths as $m) {
+            $monthLabels[] = date('M Y', mktime(0, 0, 0, $m, 1, $year));
+        }
+        $data['labels'] = $monthLabels;
+        
+        // Get top products by total forecasted demand for the selected year
+        $topProducts = DemandForecast::with('product')
             ->whereYear('forecast_date', $year)
-            ->whereMonth('forecast_date', $month)
             ->when($categoryFilter !== null, function ($q) use ($categoryFilter) {
                 $q->whereHas('product', function($query) use ($categoryFilter) {
                     $query->where('category_id', $categoryFilter);
@@ -1109,31 +968,153 @@ class DemandForecastController extends Controller
             ->select('product_id', DB::raw('SUM(predicted_demand) as total_demand'))
             ->groupBy('product_id')
             ->orderBy('total_demand', 'desc')
-            ->limit(20) // Top 20 products
+            ->limit(10) // Limit to top 10 products to avoid clutter
             ->get();
         
-        if ($forecasts->isEmpty()) {
+        if ($topProducts->isEmpty()) {
             return $data;
         }
         
-        $labels = [];
-        $demandData = [];
+        // Generate color palette for products
+        $colors = [
+            ['border' => 'rgb(75, 192, 192)', 'bg' => 'rgba(75, 192, 192, 0.1)'],
+            ['border' => 'rgb(255, 99, 132)', 'bg' => 'rgba(255, 99, 132, 0.1)'],
+            ['border' => 'rgb(54, 162, 235)', 'bg' => 'rgba(54, 162, 235, 0.1)'],
+            ['border' => 'rgb(255, 206, 86)', 'bg' => 'rgba(255, 206, 86, 0.1)'],
+            ['border' => 'rgb(153, 102, 255)', 'bg' => 'rgba(153, 102, 255, 0.1)'],
+            ['border' => 'rgb(255, 159, 64)', 'bg' => 'rgba(255, 159, 64, 0.1)'],
+            ['border' => 'rgb(199, 199, 199)', 'bg' => 'rgba(199, 199, 199, 0.1)'],
+            ['border' => 'rgb(83, 102, 255)', 'bg' => 'rgba(83, 102, 255, 0.1)'],
+            ['border' => 'rgb(99, 255, 132)', 'bg' => 'rgba(99, 255, 132, 0.1)'],
+            ['border' => 'rgb(255, 99, 255)', 'bg' => 'rgba(255, 99, 255, 0.1)'],
+        ];
         
-        foreach ($forecasts as $forecast) {
-            if ($forecast->product) {
-                $labels[] = $forecast->product->name;
-                $demandData[] = (float) $forecast->total_demand;
+        $colorIndex = 0;
+        
+        // Build dataset for each product
+        foreach ($topProducts as $productForecast) {
+            if (!$productForecast->product) {
+                continue;
             }
+            
+            $productData = [];
+            
+            // Get forecasted demand for each month
+            foreach ($forecastMonths as $m) {
+                $monthForecast = DemandForecast::where('product_id', $productForecast->product_id)
+                    ->whereYear('forecast_date', $year)
+                    ->whereMonth('forecast_date', $m)
+                    ->sum('predicted_demand');
+                
+                $productData[] = (float) $monthForecast;
+            }
+            
+            $color = $colors[$colorIndex % count($colors)];
+            $colorIndex++;
+            
+            $data['datasets'][] = [
+                'label' => $productForecast->product->name,
+                'data' => $productData,
+                'borderColor' => $color['border'],
+                'backgroundColor' => $color['bg'],
+                'tension' => 0.4,
+                'fill' => false
+            ];
         }
         
-        $data['labels'] = $labels;
+        return $data;
+    }
+    
+    /**
+     * Get forecasted demand vs inventory over time data for line chart
+     * Shows forecasted demand trend and current inventory (constant reference line) over months
+     */
+    private function getForecastVsInventoryData(int $year, int $month, ?int $categoryFilter = null)
+    {
+        $data = [
+            'labels' => [],
+            'datasets' => []
+        ];
+        
+        // Get all forecast months for the selected year
+        $forecastMonths = DemandForecast::whereYear('forecast_date', $year)
+            ->select(DB::raw('DISTINCT MONTH(forecast_date) as month'))
+            ->orderBy('month', 'asc')
+            ->pluck('month')
+            ->toArray();
+        
+        if (empty($forecastMonths)) {
+            return $data;
+        }
+        
+        // Create month labels
+        $monthLabels = [];
+        foreach ($forecastMonths as $m) {
+            $monthLabels[] = date('M Y', mktime(0, 0, 0, $m, 1, $year));
+        }
+        $data['labels'] = $monthLabels;
+        
+        // Get products with forecasts for the selected year
+        $products = Product::with(['demandForecasts' => function ($q) use ($year) {
+                $q->whereYear('forecast_date', $year);
+            }])
+            ->when($categoryFilter !== null, function ($q) use ($categoryFilter) {
+                $q->where('category_id', $categoryFilter);
+            })
+            ->whereHas('demandForecasts', function ($q) use ($year) {
+                $q->whereYear('forecast_date', $year);
+            })
+            ->orderBy('name')
+            ->limit(1) // Show aggregate for all products (or single product if filtered)
+            ->get();
+        
+        if ($products->isEmpty()) {
+            return $data;
+        }
+        
+        // Aggregate forecasted demand across all products for each month
+        $forecastData = [];
+        $inventoryValue = 0;
+        
+        foreach ($forecastMonths as $m) {
+            $monthForecast = DemandForecast::when($categoryFilter !== null, function ($q) use ($categoryFilter) {
+                    $q->whereHas('product', function($query) use ($categoryFilter) {
+                        $query->where('category_id', $categoryFilter);
+                    });
+                })
+                ->whereYear('forecast_date', $year)
+                ->whereMonth('forecast_date', $m)
+                ->sum('predicted_demand');
+            
+            $forecastData[] = (float) $monthForecast;
+        }
+        
+        // Get average inventory (constant reference line)
+        foreach ($products as $product) {
+            $inventoryValue += (float) $product->quantity;
+        }
+        $inventoryValue = $inventoryValue / count($products);
+        
+        // Create constant inventory line (same value for all months)
+        $inventoryData = array_fill(0, count($forecastMonths), $inventoryValue);
+        
         $data['datasets'] = [
             [
                 'label' => 'Forecasted Demand',
-                'data' => $demandData,
-                'backgroundColor' => 'rgba(75, 192, 192, 0.6)',
-                'borderColor' => 'rgb(75, 192, 192)',
-                'borderWidth' => 1
+                'data' => $forecastData,
+                'borderColor' => 'rgb(255, 99, 132)',
+                'backgroundColor' => 'rgba(255, 99, 132, 0.1)',
+                'tension' => 0.4,
+                'fill' => false
+            ],
+            [
+                'label' => 'Current Inventory (Reference)',
+                'data' => $inventoryData,
+                'borderColor' => 'rgb(54, 162, 235)',
+                'backgroundColor' => 'rgba(54, 162, 235, 0.1)',
+                'borderDash' => [5, 5],
+                'tension' => 0,
+                'fill' => false
             ]
         ];
         
@@ -1264,69 +1245,6 @@ class DemandForecastController extends Controller
                 'borderDash' => [5, 5],
                 'tension' => 0.4,
                 'spanGaps' => true
-            ]
-        ];
-        
-        return $data;
-    }
-    
-    /**
-     * Get forecasted demand vs inventory data for bar chart
-     */
-    private function getForecastVsInventoryData(int $year, int $month, ?int $categoryFilter = null)
-    {
-        $data = [
-            'labels' => [],
-            'datasets' => []
-        ];
-        
-        // Get products with forecasts for the selected month
-        $products = Product::with(['demandForecasts' => function ($q) use ($year, $month) {
-                $q->whereYear('forecast_date', $year)
-                  ->whereMonth('forecast_date', $month);
-            }])
-            ->when($categoryFilter !== null, function ($q) use ($categoryFilter) {
-                $q->where('category_id', $categoryFilter);
-            })
-            ->whereHas('demandForecasts', function ($q) use ($year, $month) {
-                $q->whereYear('forecast_date', $year)
-                  ->whereMonth('forecast_date', $month);
-            })
-            ->orderBy('name')
-            ->limit(20) // Top 20 products
-            ->get();
-        
-        if ($products->isEmpty()) {
-            return $data;
-        }
-        
-        $labels = [];
-        $forecastData = [];
-        $inventoryData = [];
-        
-        foreach ($products as $product) {
-            $monthForecast = $product->demandForecasts->sum('predicted_demand');
-            
-            $labels[] = $product->name;
-            $forecastData[] = (float) $monthForecast;
-            $inventoryData[] = (float) $product->quantity;
-        }
-        
-        $data['labels'] = $labels;
-        $data['datasets'] = [
-            [
-                'label' => 'Forecasted Demand',
-                'data' => $forecastData,
-                'backgroundColor' => 'rgba(255, 99, 132, 0.6)',
-                'borderColor' => 'rgb(255, 99, 132)',
-                'borderWidth' => 1
-            ],
-            [
-                'label' => 'Current Inventory',
-                'data' => $inventoryData,
-                'backgroundColor' => 'rgba(54, 162, 235, 0.6)',
-                'borderColor' => 'rgb(54, 162, 235)',
-                'borderWidth' => 1
             ]
         ];
         
