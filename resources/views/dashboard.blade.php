@@ -151,11 +151,11 @@
 <div class="modal fade" id="lowStockAlertModal" tabindex="-1" aria-labelledby="lowStockAlertModalLabel" aria-hidden="true" data-bs-backdrop="static" data-bs-keyboard="false">
     <div class="modal-dialog modal-lg modal-dialog-scrollable">
         <div class="modal-content">
-            <div class="modal-header bg-warning text-dark">
+            <div class="modal-header" style="background-color: #852E4E; color: white;">
                 <h5 class="modal-title" id="lowStockAlertModalLabel">
                     <i class="fas fa-exclamation-triangle me-2"></i>Low Stock Alert
                 </h5>
-                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Close"></button>
             </div>
             <div class="modal-body">
                 <p class="mb-3">
