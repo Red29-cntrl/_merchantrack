@@ -4,83 +4,86 @@
 
 @section('content')
 <div class="container-fluid">
-    <div class="d-flex flex-wrap justify-content-between align-items-center mb-3 gap-2">
-        <h2 class="mb-0"><i class="fas fa-chart-line me-2"></i>Demand Forecasts</h2>
-        <div class="d-flex gap-2 flex-wrap">
-            <form method="GET" action="{{ route('forecasts.index') }}" class="row g-2 align-items-center" id="table-filter-form">
+    <h2 class="mb-3"><i class="fas fa-chart-line me-2"></i>Demand Forecasts</h2>
+    
+    <div class="card mb-3">
+        <div class="card-body">
+            <form method="GET" action="{{ route('forecasts.index') }}" id="table-filter-form">
                 <input type="hidden" name="category_trend" value="{{ request('category_trend', $selectedCategoryId ?? '') }}">
-                <div class="col-auto">
-                    <label class="form-label mb-0 small text-muted">Category</label>
-                    <select name="category_id" class="form-select form-select-sm">
-                        <option value="">All</option>
-                        @foreach($categories as $category)
-                        <option value="{{ $category->id }}" {{ $categoryId == $category->id ? 'selected' : '' }}>
-                            {{ $category->name }}
-                        </option>
-                        @endforeach
-                    </select>
-                </div>
-                <div class="col-auto">
-                    <label class="form-label mb-0 small text-muted">Year</label>
-                    <select name="year" class="form-select form-select-sm">
-                        @foreach($availableYears as $yr)
-                        <option value="{{ $yr }}" {{ (int)$year === (int)$yr ? 'selected' : '' }}>{{ $yr }}</option>
-                        @endforeach
-                    </select>
-                </div>
-                <div class="col-auto">
-                    <label class="form-label mb-0 small text-muted">Month</label>
-                    <select name="month" class="form-select form-select-sm">
-                        @for($m = 1; $m <= 12; $m++)
-                        <option value="{{ $m }}" {{ (int)$selectedMonth === $m ? 'selected' : '' }}>
-                            {{ date('F', mktime(0, 0, 0, $m, 1)) }}
-                        </option>
-                        @endfor
-                    </select>
-                </div>
-                <div class="col-auto">
-                    <label class="form-label mb-0 small text-muted">Confidence</label>
-                    <select name="confidence" class="form-select form-select-sm">
-                        <option value="">All</option>
-                        <option value="90" {{ $confidenceKey === '90' ? 'selected' : '' }}>≥ 90%</option>
-                        <option value="75" {{ $confidenceKey === '75' ? 'selected' : '' }}>≥ 75%</option>
-                        <option value="50" {{ $confidenceKey === '50' ? 'selected' : '' }}>≥ 50%</option>
-                    </select>
-                </div>
-                <div class="col-auto">
-                    <label class="form-label mb-0 small text-muted">Sort</label>
-                    <select name="sort" class="form-select form-select-sm">
-                        <option value="desc" {{ $sort === 'desc' ? 'selected' : '' }}>Highest forecast</option>
-                        <option value="asc" {{ $sort === 'asc' ? 'selected' : '' }}>Lowest forecast</option>
-                    </select>
-                </div>
-                <div class="col-auto flex-grow-1">
-                    <label class="form-label mb-0 small text-muted">Search</label>
-                    <div class="input-group input-group-sm">
-                        <input type="text" name="search" class="form-control" placeholder="Product or SKU" value="{{ $search }}">
-                        <button class="btn btn-outline-primary" type="submit">
-                            <i class="fas fa-search"></i>
-                        </button>
+                <div class="row g-3 align-items-end">
+                    <div class="col-md-2">
+                        <label class="form-label mb-0 small text-muted">Category</label>
+                        <select name="category_id" class="form-select form-select-sm">
+                            <option value="">All</option>
+                            @foreach($categories as $category)
+                            <option value="{{ $category->id }}" {{ $categoryId == $category->id ? 'selected' : '' }}>
+                                {{ $category->name }}
+                            </option>
+                            @endforeach
+                        </select>
                     </div>
-                </div>
-                <div class="col-auto align-self-end">
-                    <div class="d-flex gap-2">
-                        <button class="btn btn-primary btn-sm" type="submit">
-                            <i class="fas fa-filter me-1"></i>Apply
-                        </button>
-                        @php
-                            $hasActiveFilters = request('category_id') || 
-                                                (request('year') && (int)request('year') !== (int)date('Y')) ||
-                                                (request('month') && (int)request('month') !== 1) ||
-                                                request('confidence') ||
-                                                (request('sort') && request('sort') !== 'desc') ||
-                                                request('search');
-                        @endphp
-                        @if($hasActiveFilters)
-                        <a href="{{ route('forecasts.index') }}" class="btn btn-outline-secondary btn-sm" title="Clear Filters">
-                            <i class="fas fa-times"></i>
-                        </a>
-                        @endif
+                    <div class="col-md-1">
+                        <label class="form-label mb-0 small text-muted">Year</label>
+                        <select name="year" class="form-select form-select-sm">
+                            @foreach($availableYears as $yr)
+                            <option value="{{ $yr }}" {{ (int)$year === (int)$yr ? 'selected' : '' }}>{{ $yr }}</option>
+                            @endforeach
+                        </select>
+                    </div>
+                    <div class="col-md-2">
+                        <label class="form-label mb-0 small text-muted">Month</label>
+                        <select name="month" class="form-select form-select-sm">
+                            @for($m = 1; $m <= 12; $m++)
+                            <option value="{{ $m }}" {{ (int)$selectedMonth === $m ? 'selected' : '' }}>
+                                {{ date('F', mktime(0, 0, 0, $m, 1)) }}
+                            </option>
+                            @endfor
+                        </select>
+                    </div>
+                    <div class="col-md-2">
+                        <label class="form-label mb-0 small text-muted">Confidence</label>
+                        <select name="confidence" class="form-select form-select-sm">
+                            <option value="">All</option>
+                            <option value="90" {{ $confidenceKey === '90' ? 'selected' : '' }}>≥ 90%</option>
+                            <option value="75" {{ $confidenceKey === '75' ? 'selected' : '' }}>≥ 75%</option>
+                            <option value="50" {{ $confidenceKey === '50' ? 'selected' : '' }}>≥ 50%</option>
+                        </select>
+                    </div>
+                    <div class="col-md-2">
+                        <label class="form-label mb-0 small text-muted">Sort</label>
+                        <select name="sort" class="form-select form-select-sm">
+                            <option value="desc" {{ $sort === 'desc' ? 'selected' : '' }}>Highest forecast</option>
+                            <option value="asc" {{ $sort === 'asc' ? 'selected' : '' }}>Lowest forecast</option>
+                        </select>
+                    </div>
+                    <div class="col-md-2">
+                        <label class="form-label mb-0 small text-muted">Search</label>
+                        <div class="input-group input-group-sm">
+                            <input type="text" name="search" class="form-control" placeholder="Product or SKU" value="{{ $search }}">
+                            <button class="btn" type="submit" style="background-color: #852E4E; color: white; border-color: #852E4E;">
+                                <i class="fas fa-search"></i>
+                            </button>
+                        </div>
+                    </div>
+                    <div class="col-md-auto">
+                        <div class="d-flex gap-2">
+                            <button class="btn btn-sm" type="submit" style="background-color: #852E4E; color: white; border-color: #852E4E;">
+                                <i class="fas fa-filter me-1"></i>Apply
+                            </button>
+                            @php
+                                $hasActiveFilters = request('category_id') || 
+                                                    (request('year') && (int)request('year') !== (int)date('Y')) ||
+                                                    (request('month') && (int)request('month') !== 1) ||
+                                                    request('confidence') ||
+                                                    (request('sort') && request('sort') !== 'desc') ||
+                                                    request('search');
+                            @endphp
+                            @if($hasActiveFilters)
+                            <a href="{{ route('forecasts.index') }}" class="btn btn-outline-secondary btn-sm" title="Clear Filters">
+                                <i class="fas fa-times"></i>
+                            </a>
+                            @endif
+                        </div>
                     </div>
                 </div>
             </form>

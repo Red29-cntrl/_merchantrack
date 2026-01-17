@@ -94,6 +94,7 @@
         border-radius: 10px 10px 0 0;
         display: flex;
         align-items: center;
+        justify-content: center;
         gap: 12px;
     }
     .custom-alert-header i {
@@ -104,12 +105,13 @@
         color: #4C1D3D;
         font-size: 16px;
         line-height: 1.6;
+        text-align: center;
     }
     .custom-alert-footer {
         padding: 15px 25px;
         border-top: 1px solid #DC586D;
         display: flex;
-        justify-content: flex-end;
+        justify-content: center;
         background-color: #f8f9fa;
         border-radius: 0 0 10px 10px;
     }
@@ -140,6 +142,25 @@
             opacity: 1;
         }
     }
+    /* Barcode Scanner Modal */
+    #barcode-scanner-modal {
+        z-index: 10001;
+    }
+    #barcode-scanner-container {
+        width: 100%;
+        max-width: 500px;
+        margin: 0 auto;
+    }
+    #barcode-scanner-container video {
+        width: 100%;
+        border-radius: 8px;
+    }
+    .scanner-controls {
+        display: flex;
+        gap: 10px;
+        justify-content: center;
+        margin-top: 15px;
+    }
 </style>
 @endsection
 
@@ -158,13 +179,18 @@
         <div>
             <div class="card mb-3">
                 <div class="card-body">
-                    <div class="row g-3">
-                        <div class="col-md-8">
+                    <div class="row g-3 align-items-end">
+                        <div class="col-md-6">
                             <label for="product-search" class="form-label">
                                 <i class="fas fa-search me-2"></i>Search Product
                             </label>
                             <input type="text" id="product-search" class="form-control" 
                                    placeholder="Search by product name or SKU..." autofocus>
+                        </div>
+                        <div class="col-md-2">
+                            <button class="btn btn-primary w-100" type="button" id="scan-barcode-btn" style="margin-top: 0;">
+                                <i class="fas fa-camera me-2"></i>Scan
+                            </button>
                         </div>
                         <div class="col-md-4">
                             <label for="category-filter" class="form-label">
@@ -191,6 +217,7 @@
                              data-product-id="{{ $product->id }}"
                              data-product-name="{{ $product->name }}"
                              data-product-sku="{{ $product->sku }}"
+                             data-product-barcode="{{ $product->barcode ?? '' }}"
                              data-product-price="{{ $product->price }}"
                              data-product-stock="{{ $product->quantity }}"
                              data-product-unit="{{ $product->unit ?? 'pcs' }}"
@@ -198,7 +225,7 @@
                             <strong>{{ $product->name }}</strong><br>
                             <small class="text-muted">{{ $product->sku }}</small><br>
                             <span class="badge bg-primary">₱{{ number_format($product->price, 2) }}</span><br>
-                            <small>Stock: {{ number_format($product->quantity, 0) }} {{ ucfirst($product->unit ?? 'pcs') }}</small>
+                            <small class="product-stock">Stock: {{ number_format($product->quantity, 0) }} {{ ucfirst($product->unit ?? 'pcs') }}</small>
                         </div>
                         @endforeach
                     </div>
@@ -242,6 +269,23 @@
     </div>
 </div>
 
+<!-- Barcode Scanner Modal -->
+<div class="modal fade" id="barcode-scanner-modal" tabindex="-1" aria-labelledby="barcodeScannerModalLabel" aria-hidden="true">
+    <div class="modal-dialog modal-lg">
+        <div class="modal-content">
+            <div class="modal-header" style="background-color: #852E4E; color: white;">
+                <h5 class="modal-title" id="barcodeScannerModalLabel">
+                    <i class="fas fa-barcode me-2"></i>Barcode Scanner
+                </h5>
+                <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Close" id="close-scanner-btn"></button>
+            </div>
+            <div class="modal-body">
+                <div id="barcode-scanner-container"></div>
+            </div>
+        </div>
+    </div>
+</div>
+
 <!-- Custom Alert Modal -->
 <div id="customAlertModal" class="custom-alert-modal">
     <div class="custom-alert-content">
@@ -262,7 +306,7 @@
 <div class="modal fade" id="successModal" tabindex="-1" aria-labelledby="successModalLabel" aria-hidden="true">
     <div class="modal-dialog modal-lg">
         <div class="modal-content">
-            <div class="modal-header bg-success text-white">
+            <div class="modal-header" style="background-color: #852E4E; color: white;">
                 <h5 class="modal-title" id="successModalLabel">
                     <i class="fas fa-check-circle me-2"></i>Sale Processed Successfully
                 </h5>
@@ -359,6 +403,8 @@
 @endsection
 
 @section('scripts')
+<!-- Html5-QRCode Library for Barcode Scanning -->
+<script src="https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
 <script>
 // Number formatting function with commas and decimal points (for prices/currency)
 function formatNumber(num) {
@@ -428,6 +474,152 @@ document.addEventListener('click', function(event) {
 
 let cart = [];
 const products = @json($products);
+let html5QrcodeScanner = null;
+let isScanning = false;
+
+// Barcode Scanner Functionality
+$('#scan-barcode-btn').on('click', function() {
+    $('#barcode-scanner-modal').modal('show');
+});
+
+// Automatically start scanner when modal is shown
+$('#barcode-scanner-modal').on('shown.bs.modal', function() {
+    startBarcodeScanner();
+});
+
+$('#close-scanner-btn, #barcode-scanner-modal').on('hidden.bs.modal', function() {
+    stopBarcodeScanner();
+});
+
+function startBarcodeScanner() {
+    if (isScanning) return;
+    
+    const containerId = 'barcode-scanner-container';
+    
+    html5QrcodeScanner = new Html5Qrcode(containerId);
+    
+    html5QrcodeScanner.start(
+        { facingMode: "environment" }, // Use back camera
+        {
+            fps: 10,
+            qrbox: { width: 250, height: 250 }
+        },
+        (decodedText, decodedResult) => {
+            // Successfully scanned
+            stopBarcodeScanner();
+            $('#barcode-scanner-modal').modal('hide');
+            searchProductByBarcode(decodedText);
+        },
+        (errorMessage) => {
+            // Ignore scanning errors (they're frequent during scanning)
+        }
+    ).catch((err) => {
+        console.error('Error starting scanner:', err);
+        showCustomAlert('Scanner Error', 'Failed to start camera. Please check permissions and try again.', 'error');
+    });
+    
+    isScanning = true;
+}
+
+function stopBarcodeScanner() {
+    if (html5QrcodeScanner && isScanning) {
+        html5QrcodeScanner.stop().then(() => {
+            html5QrcodeScanner.clear();
+            html5QrcodeScanner = null;
+            isScanning = false;
+        }).catch((err) => {
+            console.error('Error stopping scanner:', err);
+            html5QrcodeScanner = null;
+            isScanning = false;
+        });
+    }
+}
+
+function searchProductByBarcode(barcode) {
+    if (!barcode || barcode.trim().length === 0) {
+        return;
+    }
+    
+    $.ajax({
+        url: '{{ route("pos.getProductByBarcode") }}',
+        method: 'GET',
+        data: { barcode: barcode },
+        headers: {
+            'X-CSRF-TOKEN': $('meta[name="csrf-token"]').attr('content')
+        },
+        success: function(response) {
+            if (response.success && response.product) {
+                const product = response.product;
+                
+                // Check if product is in stock
+                if (product.quantity <= 0) {
+                    showCustomAlert('Out of Stock', `Product <strong>${product.name}</strong> (SKU: ${product.sku}) is currently out of stock.`, 'error');
+                    return;
+                }
+                
+                // Find product in products array and update it with latest data
+                const productInList = products.find(p => p.id == product.id);
+                if (!productInList) {
+                    // Product not in list, add it
+                    products.push(product);
+                } else {
+                    // Update existing product with latest data from server
+                    Object.assign(productInList, product);
+                }
+                
+                if (product.quantity <= 0) {
+                    showCustomAlert('Out of Stock', `Product <strong>${product.name}</strong> (SKU: ${product.sku}) is currently out of stock.`, 'error');
+                    return;
+                }
+                
+                // Add product to cart
+                const productUnit = (product.unit || 'pcs').toLowerCase();
+                const existingItem = cart.find(item => item.product_id == product.id);
+                
+                if (existingItem) {
+                    const newQuantity = existingItem.quantity + 1;
+                    existingItem.max_stock = product.quantity;
+                    if (newQuantity > product.quantity) {
+                        showCustomAlert('Insufficient Stock', `Insufficient stock for <strong>${product.name}</strong> (SKU: ${product.sku}).<br>Available: <strong>${formatQuantity(product.quantity)}</strong> ${product.unit || 'pcs'}`, 'warning');
+                        return;
+                    }
+                    existingItem.quantity = newQuantity;
+                    // Update stock display
+                    updateProductStockDisplay(product.id, 1);
+                } else {
+                    cart.push({
+                        product_id: product.id,
+                        product_name: product.name,
+                        product_sku: product.sku,
+                        product_unit: productUnit,
+                        unit_price: parseFloat(product.price),
+                        quantity: 1,
+                        max_stock: product.quantity
+                    });
+                    // Update stock display
+                    updateProductStockDisplay(product.id, 1);
+                }
+                
+                updateCart();
+                
+                // Visual feedback - highlight the product card briefly
+                const productCard = $(`.product-card[data-product-id="${product.id}"]`);
+                if (productCard.length) {
+                    productCard.css('background-color', '#d4edda');
+                    setTimeout(() => {
+                        productCard.css('background-color', '');
+                    }, 1000);
+                }
+            } else {
+                showCustomAlert('Product Not Found', `No product found with barcode: <strong>${barcode}</strong>`, 'warning');
+            }
+        },
+        error: function(xhr) {
+            const errorMessage = xhr.responseJSON?.message || 'Error searching for product';
+            showCustomAlert('Error', errorMessage, 'error');
+        }
+    });
+}
 
 // Product search functionality
 $('#product-search').on('input', function() {
@@ -446,14 +638,15 @@ function filterProducts() {
     $('.product-card').each(function() {
         const name = $(this).data('product-name').toLowerCase();
         const sku = $(this).data('product-sku').toLowerCase();
+        const barcode = $(this).data('product-barcode') ? $(this).data('product-barcode').toLowerCase() : '';
         const productCategoryId = $(this).data('category-id') || '';
         
         let matchesSearch = true;
         let matchesCategory = true;
         
-        // Check search filter
+        // Check search filter (search by name, SKU, or barcode)
         if (search.length > 0) {
-            matchesSearch = name.includes(search) || sku.includes(search);
+            matchesSearch = name.includes(search) || sku.includes(search) || (barcode && barcode.includes(search));
         }
         
         // Check category filter
@@ -472,6 +665,39 @@ function filterProducts() {
 
 // Available unit options
 const unitOptions = ['pcs', 'box', 'pack', 'set', 'bag', 'kg', 'g', 'lb', 'liter', 'ml', 'meter', 'cm'];
+
+// Function to update product stock display
+function updateProductStockDisplay(productId, quantityChange) {
+    const productCard = $(`.product-card[data-product-id="${productId}"]`);
+    if (productCard.length === 0) return;
+    
+    // Find product in products array
+    const product = products.find(p => p.id == productId);
+    if (!product) return;
+    
+    // Update the product quantity in the array
+    product.quantity = Math.max(0, product.quantity - quantityChange);
+    
+    // Update the data attribute
+    productCard.data('product-stock', product.quantity);
+    
+    // Update the stock display text
+    const stockText = productCard.find('.product-stock');
+    const unit = product.unit || 'pcs';
+    stockText.text(`Stock: ${formatQuantity(product.quantity)} ${ucfirst(unit)}`);
+    
+    // Update out-of-stock class
+    if (product.quantity <= 0) {
+        productCard.addClass('out-of-stock');
+    } else {
+        productCard.removeClass('out-of-stock');
+    }
+}
+
+// Helper function to capitalize first letter
+function ucfirst(str) {
+    return str.charAt(0).toUpperCase() + str.slice(1);
+}
 
 // Add product to cart on product card click
 $('.product-card').on('click', function() {
@@ -500,6 +726,8 @@ $('.product-card').on('click', function() {
             return;
         }
         existingItem.quantity = newQuantity;
+        // Update stock display
+        updateProductStockDisplay(productId, 1);
     } else {
         // Add new item to cart with quantity 1
         cart.push({
@@ -511,6 +739,8 @@ $('.product-card').on('click', function() {
             quantity: 1,
             max_stock: product.quantity
         });
+        // Update stock display
+        updateProductStockDisplay(productId, 1);
     }
     
     updateCart();
@@ -593,7 +823,20 @@ function updateCartQuantity(index, newQuantity) {
         return;
     }
     
+    // Calculate the difference in quantity
+    const oldQuantity = item.quantity;
+    const quantityDiff = quantity - oldQuantity;
+    
+    // Update cart quantity
     cart[index].quantity = quantity;
+    
+    // Update product stock display
+    // If quantity increased (positive diff), stock decreases (pass positive)
+    // If quantity decreased (negative diff), stock increases (pass negative, which becomes positive in function)
+    if (quantityDiff !== 0) {
+        updateProductStockDisplay(item.product_id, quantityDiff);
+    }
+    
     updateCart();
 }
 
@@ -604,6 +847,12 @@ function updateCartUnit(index, newUnit) {
 }
 
 function removeFromCart(index) {
+    const item = cart[index];
+    if (item) {
+        // Restore stock when removing from cart
+        // Pass negative value to increase stock (since function subtracts)
+        updateProductStockDisplay(item.product_id, -item.quantity);
+    }
     cart.splice(index, 1);
     updateCart();
 }
@@ -837,6 +1086,8 @@ $('#process-sale').on('click', async function() {
             },
             success: function(response) {
                 if (response.success) {
+                    // Stock is already updated from cart operations, but ensure it's correct
+                    // The stock display should already reflect the sold quantities
                     // Show success modal with receipt
                     showSuccessModal(response.sale, response.business);
                     cart = [];
@@ -885,6 +1136,11 @@ async function handleOfflineSale(saleData) {
             discount: saleData.discount,
             total: saleData.total
         };
+        
+        // Update product stocks for offline sale
+        saleData.items.forEach(function(item) {
+            updateProductStockDisplay(item.product_id, item.quantity);
+        });
         
         showSuccessModal(tempSale);
         

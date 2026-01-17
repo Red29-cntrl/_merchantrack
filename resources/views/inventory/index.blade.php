@@ -241,14 +241,14 @@
                 <table class="table table-hover">
                     <thead>
                         <tr>
-                            <th>Date</th>
-                            <th>Product</th>
-                            <th>Stock</th>
-                            <th>In</th>
-                            <th>Out</th>
-                            <th>Balance</th>
-                            <th>Reason</th>
-                            <th>Staff</th>
+                            <th><strong>Date</strong></th>
+                            <th><strong>Product</strong></th>
+                            <th><strong>Stock</strong></th>
+                            <th><strong>In</strong></th>
+                            <th><strong>Out</strong></th>
+                            <th><strong>Balance</strong></th>
+                            <th><strong>Reason</strong></th>
+                            <th><strong>Staff</strong></th>
                         </tr>
                     </thead>
                     <tbody>

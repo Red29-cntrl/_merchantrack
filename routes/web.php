@@ -39,6 +39,7 @@ Route::middleware('auth')->group(function () {
         // POS Routes (Staff only)
         Route::get('/pos', [POSController::class, 'index'])->name('pos.index');
         Route::get('/pos/product/{id}', [POSController::class, 'getProduct'])->name('pos.getProduct');
+        Route::get('/pos/product-by-barcode', [POSController::class, 'getProductByBarcode'])->name('pos.getProductByBarcode');
         Route::post('/pos/process-sale', [POSController::class, 'processSale'])->name('pos.processSale');
     });
     

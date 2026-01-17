@@ -32,6 +32,34 @@ class POSController extends Controller
         return response()->json($product);
     }
 
+    public function getProductByBarcode(Request $request)
+    {
+        $barcode = $request->input('barcode');
+        
+        if (!$barcode) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Barcode is required'
+            ], 400);
+        }
+
+        $product = Product::where('barcode', $barcode)
+            ->where('is_active', true)
+            ->first();
+
+        if (!$product) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Product not found with this barcode'
+            ], 404);
+        }
+
+        return response()->json([
+            'success' => true,
+            'product' => $product
+        ]);
+    }
+
     public function processSale(Request $request)
     {
         $request->validate([
