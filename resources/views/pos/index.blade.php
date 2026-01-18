@@ -424,8 +424,20 @@ function removeCommas(str) {
 // Function to format quantity input on blur
 function formatQuantityInput(input) {
     const value = removeCommas(input.value);
-    if (value && !isNaN(value)) {
-        input.value = formatQuantity(value);
+    // Handle empty string - set to 0
+    if (value === '' || value === null || value === undefined) {
+        input.value = '0';
+        return;
+    }
+    // Parse the value
+    const numValue = parseInt(value);
+    // If valid number (including 0), format it
+    if (!isNaN(numValue)) {
+        // For 0, just set to '0', otherwise format with commas
+        input.value = numValue === 0 ? '0' : formatQuantity(numValue);
+    } else {
+        // Invalid input, set to 0
+        input.value = '0';
     }
 }
 
@@ -587,17 +599,17 @@ function searchProductByBarcode(barcode) {
                     // Update stock display
                     updateProductStockDisplay(product.id, 1);
                 } else {
+                    // Add new item to cart with quantity 0 (stock not taken until quantity is set > 0)
                     cart.push({
                         product_id: product.id,
                         product_name: product.name,
                         product_sku: product.sku,
                         product_unit: productUnit,
                         unit_price: parseFloat(product.price),
-                        quantity: 1,
+                        quantity: 0,
                         max_stock: product.quantity
                     });
-                    // Update stock display
-                    updateProductStockDisplay(product.id, 1);
+                    // No stock update needed when quantity is 0
                 }
                 
                 updateCart();
@@ -729,18 +741,17 @@ $('.product-card').on('click', function() {
         // Update stock display
         updateProductStockDisplay(productId, 1);
     } else {
-        // Add new item to cart with quantity 1
+        // Add new item to cart with quantity 0 (stock not taken until quantity is set > 0)
         cart.push({
             product_id: productId,
             product_name: product.name,
             product_sku: product.sku,
             product_unit: productUnit,
             unit_price: parseFloat(product.price),
-            quantity: 1,
+            quantity: 0,
             max_stock: product.quantity
         });
-        // Update stock display
-        updateProductStockDisplay(productId, 1);
+        // No stock update needed when quantity is 0
     }
     
     updateCart();
@@ -799,7 +810,18 @@ function updateCart() {
 
 function updateCartQuantity(index, newQuantity) {
     // Remove commas if present and parse as integer
-    const quantity = parseInt(removeCommas(newQuantity)) || 1;
+    // Allow 0 quantity - handle empty string and 0 explicitly
+    const cleanedValue = removeCommas(newQuantity);
+    let quantity;
+    
+    // Handle empty string or whitespace - set to 0
+    if (!cleanedValue || cleanedValue.trim() === '') {
+        quantity = 0;
+    } else {
+        const parsedValue = parseInt(cleanedValue);
+        // Allow 0 - only use default if truly NaN
+        quantity = isNaN(parsedValue) ? 0 : parsedValue;
+    }
     const item = cart[index];
     
     if (!item) return;
@@ -807,8 +829,23 @@ function updateCartQuantity(index, newQuantity) {
     const product = products.find(p => p.id == item.product_id);
     const maxStock = product ? product.quantity : (item.max_stock || 999);
     
-    if (quantity <= 0) {
-        showCustomAlert('Invalid Quantity', 'Quantity must be at least 1.', 'warning');
+    // Allow 0 quantity, but show warning
+    if (quantity < 0) {
+        showCustomAlert('Invalid Quantity', 'Quantity cannot be negative.', 'warning');
+        cart[index].quantity = 0;
+        updateCart();
+        return;
+    }
+    
+    // If quantity is 0, allow it but warn user
+    if (quantity === 0) {
+        // Still update the cart and stock, but allow 0
+        const oldQuantity = item.quantity;
+        const quantityDiff = quantity - oldQuantity;
+        cart[index].quantity = quantity;
+        if (quantityDiff !== 0) {
+            updateProductStockDisplay(item.product_id, quantityDiff);
+        }
         updateCart();
         return;
     }
@@ -848,11 +885,21 @@ function updateCartUnit(index, newUnit) {
 
 function removeFromCart(index) {
     const item = cart[index];
-    if (item) {
-        // Restore stock when removing from cart
-        // Pass negative value to increase stock (since function subtracts)
-        updateProductStockDisplay(item.product_id, -item.quantity);
+    if (!item) {
+        updateCart();
+        return;
     }
+    
+    // Always restore stock when removing from cart
+    // The stock was reduced when the item was added/changed, so we need to restore it
+    // Restore stock based on current quantity in cart (which represents what's currently reserved)
+    // Pass negative value to increase stock (since updateProductStockDisplay subtracts the quantityChange)
+    const quantityToRestore = item.quantity || 0;
+    if (quantityToRestore > 0) {
+        updateProductStockDisplay(item.product_id, -quantityToRestore);
+    }
+    
+    // Remove item from cart after restoring stock
     cart.splice(index, 1);
     updateCart();
 }
@@ -1053,14 +1100,29 @@ $('#process-sale').on('click', async function() {
         return;
     }
     
-    const subtotal = cart.reduce((sum, item) => sum + (item.unit_price * item.quantity), 0);
+    // Check for items with quantity 0 - prevent sale if any item has 0 quantity
+    const itemsWithZeroQuantity = cart.filter(item => item.quantity <= 0);
+    if (itemsWithZeroQuantity.length > 0) {
+        const productNames = itemsWithZeroQuantity.map(item => item.product_name).join(', ');
+        showCustomAlert('Invalid Quantity', `Cannot process sale. The following items have quantity 0:<br><strong>${productNames}</strong><br><br>Please set a quantity greater than 0 or remove these items from the cart.`, 'error');
+        return;
+    }
+    
+    // Filter out any items with 0 quantity (shouldn't happen after above check, but just in case)
+    const validCartItems = cart.filter(item => item.quantity > 0);
+    if (validCartItems.length === 0) {
+        showCustomAlert('Empty Cart', 'Your cart has no items with valid quantities. Please add items before processing the sale.', 'warning');
+        return;
+    }
+    
+    const subtotal = validCartItems.reduce((sum, item) => sum + (item.unit_price * item.quantity), 0);
     const taxRate = parseFloat($('#tax-rate').val()) || 0;
     const discount = parseFloat($('#discount').val()) || 0;
     const tax = subtotal * (taxRate / 100);
     const total = subtotal + tax - discount;
     
     const saleData = {
-        items: cart.map(item => ({
+        items: validCartItems.map(item => ({
             product_id: item.product_id,
             quantity: item.quantity,
             unit: item.product_unit || 'pcs',
