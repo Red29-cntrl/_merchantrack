@@ -13,6 +13,12 @@ use Illuminate\Support\Facades\DB;
 
 class POSController extends Controller
 {
+    /**
+     * Minimum stock that must remain after any stock-out (sales, etc.)
+     * This keeps 20 units on-hand as the reorder buffer.
+     */
+    private const MIN_REMAINING_STOCK = 20;
+
     public function __construct()
     {
         $this->middleware('auth');
@@ -21,7 +27,8 @@ class POSController extends Controller
     public function index()
     {
         $categories = Category::with('products')->get();
-        $products = Product::where('is_active', true)->where('quantity', '>', 0)->get();
+        // Only show items that can be sold without dropping below the reorder buffer
+        $products = Product::where('is_active', true)->where('quantity', '>', self::MIN_REMAINING_STOCK)->get();
         $businessSettings = BusinessSetting::getSettings();
         return view('pos.index', compact('categories', 'products', 'businessSettings'));
     }
@@ -87,10 +94,26 @@ class POSController extends Controller
             ]);
 
             foreach ($request->items as $item) {
-                $product = Product::findOrFail($item['product_id']);
+                // Lock the product row to prevent race conditions in concurrent sales
+                $product = Product::where('id', $item['product_id'])->lockForUpdate()->firstOrFail();
                 
+                // Validate stock availability
                 if ($product->quantity < $item['quantity']) {
-                    throw new \Exception("Insufficient stock for {$product->name}");
+                    DB::rollBack();
+                    return response()->json([
+                        'success' => false,
+                        'message' => "Insufficient stock for {$product->name}. Available: {$product->quantity}, Requested: {$item['quantity']}"
+                    ], 400);
+                }
+
+                // Enforce reorder buffer: do not allow sales that would drop stock below 20
+                $remainingAfterSale = $product->quantity - (int) $item['quantity'];
+                if ($remainingAfterSale < self::MIN_REMAINING_STOCK) {
+                    DB::rollBack();
+                    return response()->json([
+                        'success' => false,
+                        'message' => "Cannot complete sale for {$product->name}. Must keep at least " . self::MIN_REMAINING_STOCK . " in stock for reorder. Available: {$product->quantity}, Requested: {$item['quantity']}, Would remain: {$remainingAfterSale}."
+                    ], 400);
                 }
 
                 SaleItem::create([

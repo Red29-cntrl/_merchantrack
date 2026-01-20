@@ -218,11 +218,25 @@ class InventoryController extends Controller
             'reason' => 'nullable|string',
         ]);
 
+        // Refresh product from database to get the latest quantity (avoid stale data)
+        $product->refresh();
+
         $quantity = $request->type === 'out' ? -$request->quantity : $request->quantity;
 
         // Prevent taking stock out when there is not enough on hand
         if ($request->type === 'out' && $product->quantity < $request->quantity) {
-            return redirect()->back()->with('error', 'Cannot stock out more than available quantity.');
+            return redirect()->back()->with('error', "Cannot stock out more than available quantity. Available stock: {$product->quantity}, Requested: {$request->quantity}.");
+        }
+
+        // Enforce 20-unit reorder buffer: do not allow stock-out that would drop below 20 remaining
+        if ($request->type === 'out') {
+            $remaining = $product->quantity - (int) $request->quantity;
+            if ($remaining < 20) {
+                return redirect()->back()->with(
+                    'error',
+                    "Cannot stock out {$request->quantity}. Must keep at least 20 in stock for reorder. Available stock: {$product->quantity}, Would remain: {$remaining}."
+                );
+            }
         }
 
         InventoryMovement::create([
