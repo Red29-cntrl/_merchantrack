@@ -1162,7 +1162,11 @@ $('#process-sale').on('click', async function() {
                     await handleOfflineSale(saleData);
                 } else {
                     const error = xhr.responseJSON?.message || 'Error processing sale';
-                    showCustomAlert('Error', `An error occurred: ${error}`, 'error');
+                    showCustomAlert(
+                        'Stock warning',
+                        `An error occurred: ${error}`.replace(/\n/g, '<br>'),
+                        'warning'
+                    );
                 }
             }
         });

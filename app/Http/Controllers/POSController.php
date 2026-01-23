@@ -112,7 +112,11 @@ class POSController extends Controller
                     DB::rollBack();
                     return response()->json([
                         'success' => false,
-                        'message' => "Cannot complete sale for {$product->name}. Must keep at least " . self::MIN_REMAINING_STOCK . " in stock for reorder. Available: {$product->quantity}, Requested: {$item['quantity']}, Would remain: {$remainingAfterSale}."
+                        'message' => "Cannot complete sale for {$product->name}.\n\n"
+                            . "Must keep at least " . self::MIN_REMAINING_STOCK . " in stock for reorder.\n\n"
+                            . "Available: {$product->quantity}\n"
+                            . "Requested: {$item['quantity']}\n"
+                            . "Would remain: {$remainingAfterSale}"
                     ], 400);
                 }
 
