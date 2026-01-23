@@ -204,7 +204,8 @@
                             <th>Product</th>
                             <th>SKU</th>
                             <th>Category</th>
-                            <th>Stock</th>
+                            <th>Current Stock</th>
+                            <th>Balance</th>
                             <th>Unit</th>
                             <th>Status</th>
                         </tr>
@@ -216,8 +217,13 @@
                             <td>{{ $product->sku }}</td>
                             <td>{{ $product->category->name ?? 'N/A' }}</td>
                             <td>
+                                <span class="badge bg-info">
+                                    {{ number_format($product->current_stock ?? $product->quantity, 0) }}
+                                </span>
+                            </td>
+                            <td>
                                 <span class="badge bg-{{ $product->isLowStock() ? 'warning' : 'success' }}">
-                                    {{ number_format($product->quantity, 0) }}
+                                    {{ number_format($product->balance ?? $product->quantity, 0) }}
                                 </span>
                             </td>
                             <td>
@@ -231,7 +237,7 @@
                         </tr>
                         @empty
                         <tr>
-                            <td colspan="6" class="text-center">No products found</td>
+                            <td colspan="7" class="text-center">No products found</td>
                         </tr>
                         @endforelse
                     </tbody>
@@ -243,7 +249,7 @@
                         <tr>
                             <th><strong>Date</strong></th>
                             <th><strong>Product</strong></th>
-                            <th><strong>Stock</strong></th>
+                            <th><strong>Current Stock</strong></th>
                             <th><strong>In</strong></th>
                             <th><strong>Out</strong></th>
                             <th><strong>Balance</strong></th>
@@ -259,17 +265,17 @@
                             <td>{{ $movement->product->name }}</td>
                             <td>{{ number_format($movement->opening_balance ?? 0, 0) }}</td>
                             <td>
-                                @if($movement->type === 'out')
-                                    —
-                                @else
+                                @if($movement->type === 'in' || $movement->type === 'adjustment')
                                     {{ number_format($movement->quantity, 0) }}
+                                @else
+                                    <span class="text-muted">—</span>
                                 @endif
                             </td>
                             <td>
                                 @if($movement->type === 'out')
                                     {{ number_format($movement->quantity, 0) }}
                                 @else
-                                    —
+                                    <span class="text-muted">—</span>
                                 @endif
                             </td>
                             <td>{{ number_format($movement->running_balance ?? 0, 0) }}</td>

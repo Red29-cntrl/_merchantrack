@@ -44,6 +44,28 @@ class InventoryController extends Controller
                 })
                 ->orderBy('name')
                 ->paginate(15);
+            
+            // Calculate Current Stock and Balance for each product
+            foreach ($balanceProducts as $product) {
+                // Get all transactions for this product
+                $allMovements = InventoryMovement::where('product_id', $product->id)
+                    ->orderBy('created_at', 'asc')
+                    ->get();
+                
+                $transactionSum = 0;
+                foreach ($allMovements as $movement) {
+                    if ($movement->type === 'out') {
+                        $transactionSum -= $movement->quantity;
+                    } else {
+                        $transactionSum += $movement->quantity;
+                    }
+                }
+                
+                // Current Stock = product.quantity - transaction sum (initial stock before transactions)
+                $product->current_stock = max(0, $product->quantity - $transactionSum);
+                // Balance = Current Stock + transaction sum = product.quantity (current balance)
+                $product->balance = $product->quantity;
+            }
         } else {
             $query = InventoryMovement::with('product', 'user')
                 ->whereHas('product'); // Only get movements where product still exists
@@ -56,11 +78,11 @@ class InventoryController extends Controller
                 $query->where('type', $request->type);
             }
 
-            // Month-by-month filtering (default to current month for clarity; "all" shows everything for the year)
+            // Month-by-month filtering (default to "all" so recent changes are visible without extra clicks)
             $selectedYear = $request->get('year', date('Y'));
             $selectedMonth = $request->has('month')
                 ? $request->get('month')
-                : date('n');
+                : 'all';
 
             if ($selectedMonth !== 'all') {
                 $query->whereMonth('created_at', $selectedMonth);
@@ -75,7 +97,10 @@ class InventoryController extends Controller
                               ->orderBy('id', 'desc')
                               ->get();
 
-            // Compute running balance per product (based on all recorded movements in chronological order)
+            // Compute running balance per product
+            // Current Stock = quantity from product model (initial/baseline before transactions)
+            // Balance = Current Stock + sum of all transactions
+            
             // First, get all movements in chronological order for balance calculation
             $balanceQuery = InventoryMovement::with('product', 'user')
                 ->whereHas('product');
@@ -86,55 +111,90 @@ class InventoryController extends Controller
             
             $allMovementsForBalance = $balanceQuery->orderBy('created_at', 'asc')->get();
             
-            $balances = [];
+            // Calculate initial stock (Current Stock) for each product
+            // Current Stock = product.quantity - (sum of all transactions)
+            $productCurrentStocks = [];
+            $transactionSums = [];
+            
             foreach ($allMovementsForBalance as $movement) {
                 $productId = $movement->product_id;
-                if (!isset($balances[$productId])) {
-                    $balances[$productId] = 0;
+                if (!isset($transactionSums[$productId])) {
+                    $transactionSums[$productId] = 0;
                 }
-
+                
                 if ($movement->type === 'out') {
-                    $balances[$productId] -= $movement->quantity;
+                    $transactionSums[$productId] -= $movement->quantity;
                 } else {
                     // Treat "in" and "adjustment" as positive adjustments
-                    $balances[$productId] += $movement->quantity;
+                    $transactionSums[$productId] += $movement->quantity;
                 }
             }
             
-            // Now add opening and running balances to displayed movements
-            $displayBalances = [];
-            foreach ($movements as $movement) {
+            // Get current stock for each product (reverse calculate from current quantity)
+            $productIds = array_unique($allMovementsForBalance->pluck('product_id')->toArray());
+            foreach ($productIds as $productId) {
+                $product = Product::find($productId);
+                if ($product) {
+                    // Current Stock = product.quantity - transaction sum
+                    // This gives us the initial stock before any transactions
+                    $productCurrentStocks[$productId] = max(0, $product->quantity - $transactionSums[$productId]);
+                } else {
+                    $productCurrentStocks[$productId] = 0;
+                }
+            }
+            
+            // Calculate balances for all movements in chronological order
+            // Then attach them to the movements displayed in reverse order
+            $movementBalances = [];
+            
+            // Process all movements chronologically to calculate balances
+            $chronologicalMovements = InventoryMovement::with('product', 'user')
+                ->whereHas('product');
+            
+            if ($request->has('product_id') && $request->product_id) {
+                $chronologicalMovements->where('product_id', $request->product_id);
+            }
+            
+            $chronologicalMovements = $chronologicalMovements->orderBy('created_at', 'asc')
+                ->orderBy('id', 'asc')
+                ->get();
+            
+            $runningBalances = [];
+            foreach ($chronologicalMovements as $movement) {
                 $productId = $movement->product_id;
                 
-                // Calculate opening balance by processing all movements before this one
-                if (!isset($displayBalances[$productId])) {
-                    $displayBalances[$productId] = 0;
-                    // Get all movements before this one for this product
-                    $earlierMovements = InventoryMovement::where('product_id', $productId)
-                        ->where('created_at', '<', $movement->created_at)
-                        ->orderBy('created_at', 'asc')
-                        ->get();
-                    
-                    foreach ($earlierMovements as $earlier) {
-                        if ($earlier->type === 'out') {
-                            $displayBalances[$productId] -= $earlier->quantity;
-                        } else {
-                            $displayBalances[$productId] += $earlier->quantity;
-                        }
-                    }
+                // Initialize balance with Current Stock if first movement for this product
+                if (!isset($runningBalances[$productId])) {
+                    $currentStock = $productCurrentStocks[$productId] ?? 0;
+                    $runningBalances[$productId] = $currentStock;
                 }
                 
-                // Ensure balance doesn't go negative - set to 0 minimum
-                $movement->opening_balance = max(0, $displayBalances[$productId]);
+                // Store opening balance (before this transaction)
+                $movementBalances[$movement->id] = [
+                    'opening_balance' => max(0, $runningBalances[$productId]),
+                ];
                 
+                // Apply transaction
                 if ($movement->type === 'out') {
-                    $displayBalances[$productId] -= $movement->quantity;
+                    $runningBalances[$productId] -= $movement->quantity;
                 } else {
-                    $displayBalances[$productId] += $movement->quantity;
+                    $runningBalances[$productId] += $movement->quantity;
                 }
                 
-                // Ensure balance doesn't go negative - set to 0 minimum
-                $movement->running_balance = max(0, $displayBalances[$productId]);
+                // Store running balance (after this transaction)
+                $movementBalances[$movement->id]['running_balance'] = max(0, $runningBalances[$productId]);
+            }
+            
+            // Attach balances to displayed movements (which are in reverse chronological order)
+            foreach ($movements as $movement) {
+                if (isset($movementBalances[$movement->id])) {
+                    $movement->opening_balance = $movementBalances[$movement->id]['opening_balance'];
+                    $movement->running_balance = $movementBalances[$movement->id]['running_balance'];
+                } else {
+                    // Fallback if movement not found in chronological list
+                    $movement->opening_balance = 0;
+                    $movement->running_balance = 0;
+                }
             }
         }
 
@@ -149,7 +209,7 @@ class InventoryController extends Controller
             $availableYears = [date('Y')];
         }
 
-        $selectedMonth = $request->has('month') ? $request->get('month') : date('n');
+        $selectedMonth = $request->has('month') ? $request->get('month') : 'all';
         $selectedYear = $request->get('year', date('Y'));
 
         return view('inventory.index', compact(
