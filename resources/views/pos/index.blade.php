@@ -589,15 +589,12 @@ function searchProductByBarcode(barcode) {
                 const existingItem = cart.find(item => item.product_id == product.id);
                 
                 if (existingItem) {
-                    const newQuantity = existingItem.quantity + 1;
-                    existingItem.max_stock = product.quantity;
-                    if (newQuantity > product.quantity) {
-                        showCustomAlert('Insufficient Stock', `Insufficient stock for <strong>${product.name}</strong> (SKU: ${product.sku}).<br>Available: <strong>${formatQuantity(product.quantity)}</strong> ${product.unit || 'pcs'}`, 'warning');
-                        return;
-                    }
-                    existingItem.quantity = newQuantity;
-                    // Update stock display
-                    updateProductStockDisplay(product.id, 1);
+                    // Product already in cart - do not auto-increment on scan
+                    showCustomAlert(
+                        'Already in Cart',
+                        `Product <strong>${product.name}</strong> (SKU: ${product.sku}) is already in the cart.<br><br>Please adjust the quantity in the cart row instead.`,
+                        'warning'
+                    );
                 } else {
                     // Add new item to cart with quantity 0 (stock not taken until quantity is set > 0)
                     cart.push({
@@ -729,17 +726,12 @@ $('.product-card').on('click', function() {
     // Check if product already exists in cart
     const existingItem = cart.find(item => item.product_id == productId);
     if (existingItem) {
-        // If exists, just increment quantity by 1
-        const newQuantity = existingItem.quantity + 1;
-        // Update max_stock in case stock changed
-        existingItem.max_stock = product.quantity;
-        if (newQuantity > product.quantity) {
-            showCustomAlert('Insufficient Stock', `Insufficient stock for <strong>${product.name}</strong> (SKU: ${product.sku}).<br>Available: <strong>${formatQuantity(product.quantity)}</strong> ${product.unit || 'pcs'}`, 'warning');
-            return;
-        }
-        existingItem.quantity = newQuantity;
-        // Update stock display
-        updateProductStockDisplay(productId, 1);
+        // Product already in cart - do not auto-increment on click
+        showCustomAlert(
+            'Already in Cart',
+            `Product <strong>${product.name}</strong> (SKU: ${product.sku}) is already in the cart.<br><br>Please adjust the quantity in the cart row instead.`,
+            'warning'
+        );
     } else {
         // Add new item to cart with quantity 0 (stock not taken until quantity is set > 0)
         cart.push({
@@ -828,6 +820,7 @@ function updateCartQuantity(index, newQuantity) {
     
     const product = products.find(p => p.id == item.product_id);
     const maxStock = product ? product.quantity : (item.max_stock || 999);
+    const MIN_REMAINING_STOCK = 20;
     
     // Allow 0 quantity, but show warning
     if (quantity < 0) {
@@ -846,6 +839,23 @@ function updateCartQuantity(index, newQuantity) {
         if (quantityDiff !== 0) {
             updateProductStockDisplay(item.product_id, quantityDiff);
         }
+        updateCart();
+        return;
+    }
+    
+    // Show stock warning when remaining stock after this quantity goes below the buffer
+    const remainingAfter = maxStock - quantity;
+    if (quantity > 0 && remainingAfter >= 0 && remainingAfter < MIN_REMAINING_STOCK) {
+        const productName = product ? product.name : item.product_name;
+        const productSku = product ? product.sku : 'N/A';
+        const warningMessage = `
+            <strong>${productName}</strong> (${productSku}) will be out of stock.
+            <br><br>
+            Reorder level is <strong>${MIN_REMAINING_STOCK}</strong> stock.`;
+        showCustomAlert('Stock warning', warningMessage, 'warning');
+        
+        // Reset quantity and keep stock at its current value after user acknowledges the warning
+        cart[index].quantity = 0;
         updateCart();
         return;
     }

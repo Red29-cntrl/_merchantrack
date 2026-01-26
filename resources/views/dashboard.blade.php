@@ -168,7 +168,6 @@
                                 <th>Product Name</th>
                                 <th>Category</th>
                                 <th>Current Stock</th>
-                                <th>Reorder Level</th>
                                 <th>Status</th>
                             </tr>
                         </thead>
@@ -183,11 +182,10 @@
                                 </td>
                                 <td>{{ $product->category->name ?? 'N/A' }}</td>
                                 <td>
-                                    <span class="fw-bold {{ $product->quantity == 0 ? 'text-danger' : 'text-warning' }}">
+                                    <span class="fw-bold text-dark">
                                         {{ number_format($product->quantity, 0) }} {{ $product->unit }}
                                     </span>
                                 </td>
-                                <td>{{ number_format($product->reorder_level, 0) }} {{ $product->unit }}</td>
                                 <td>
                                     <span class="badge bg-{{ $product->quantity == 0 ? 'danger' : 'warning' }}">
                                         {{ $product->quantity == 0 ? 'Out of Stock' : 'Low Stock' }}

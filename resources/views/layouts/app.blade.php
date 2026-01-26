@@ -50,7 +50,7 @@
         }
         .sidebar .logo {
             padding: 12px 20px;
-            text-align: left;
+            text-align: center; /* upper-center in the sidebar */
             border-bottom: 1px solid rgba(255,255,255,0.2);
             margin: 5px 10px 20px 10px;
         }

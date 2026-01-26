@@ -4,6 +4,7 @@ namespace App\Http\Controllers;
 
 use App\Product;
 use App\Category;
+use App\InventoryMovement;
 use Illuminate\Http\Request;
 
 class ProductController extends Controller
@@ -102,7 +103,25 @@ class ProductController extends Controller
             'unit' => 'required|string|max:50',
         ]);
 
+        // Capture old quantity before update so we can log inventory movement
+        $oldQuantity = $product->quantity;
+
         $product->update($data);
+
+        // Log inventory movement if quantity changed via product edit
+        $newQuantity = $product->quantity;
+        $diff = $newQuantity - $oldQuantity;
+
+        if ($diff !== 0) {
+            InventoryMovement::create([
+                'product_id' => $product->id,
+                'user_id' => auth()->id(),
+                'type' => $diff > 0 ? 'in' : 'out',
+                'quantity' => abs($diff),
+                'reason' => 'Product quantity edited',
+            ]);
+        }
+
         return redirect()->route('products.index')->with('success', 'Product updated successfully.');
     }
 
