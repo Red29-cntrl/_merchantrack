@@ -263,7 +263,7 @@ Where:
 2. Collects historical sales + inventory movements
 3. Requires minimum 7 days of data
 4. Calculates linear regression trend
-5. Generates daily forecasts for entire year 2026
+5. Generates daily forecasts for the requested year (supports future years like 2027, 2028, ...)
 6. Applies seasonal and weekend adjustments
 7. Stores forecasts in database
 
@@ -282,7 +282,7 @@ Where:
 ## 🎯 Why You See Feb-Dec Results Even with Only January Sales
 
 **Explanation:**
-1. The system generates forecasts for **all 365 days** in 2026 (entire year)
+1. The system generates forecasts for **all days** in the selected forecast year (entire year)
 2. Even if you only have sales in January, the linear regression **projects forward** using the trend
 3. The formula `predicted = intercept + (slope × daysFromStart)` calculates demand for **every future day**
 4. These forecasts are **stored in the database** (`demand_forecasts` table)
@@ -290,7 +290,7 @@ Where:
 
 **Example:**
 - Historical sales: Only January 2025
-- System generates: Forecasts for Jan 1, 2026 → Dec 31, 2026 (365 records)
+- System generates: Forecasts for Jan 1 → Dec 31 of the selected forecast year (one record per day)
 - Graph displays: All 12 months because forecasts exist in database
 
 ---

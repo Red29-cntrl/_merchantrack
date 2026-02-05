@@ -20,12 +20,29 @@ class DemandForecastController extends Controller
 
     public function index(Request $request)
     {
-        // Check if forecasts already exist for 2026
-        $existingForecasts = DemandForecast::whereYear('forecast_date', 2026)->count();
+        $defaultYear = (int) date('Y');
+        $year = (int) $request->get('year', $defaultYear);
+        $selectedMonth = (int) $request->get('month', 1); // Default to January
+
+        // Generate forecasts for multiple future years (current year + next 2 years = 3 years total)
+        // This ensures forecasts are ready as sales data is continuously added through POS
+        $forecastYearsAhead = 2; // Generate forecasts for current year + next 2 years
+        $startForecastYear = $defaultYear;
+        $totalYearsToGenerate = $forecastYearsAhead + 1; // current year + next N years
         
-        if ($existingForecasts == 0) {
-            // Generate forecasts using Trend Projection Method
-            $this->generateForecastUsingTrendProjection();
+        // Check if any forecasts are missing in the range
+        $needsGeneration = false;
+        for ($checkYear = $startForecastYear; $checkYear < $startForecastYear + $totalYearsToGenerate; $checkYear++) {
+            $existingForecastsForYear = DemandForecast::whereYear('forecast_date', $checkYear)->count();
+            if ($existingForecastsForYear === 0) {
+                $needsGeneration = true;
+                break;
+            }
+        }
+        
+        // Generate forecasts for all years in the range (function will skip existing ones)
+        if ($needsGeneration) {
+            $this->generateForecastUsingTrendProjection($startForecastYear, $totalYearsToGenerate);
         }
 
         $availableYears = DemandForecast::selectRaw('DISTINCT YEAR(forecast_date) as year')
@@ -33,17 +50,13 @@ class DemandForecastController extends Controller
             ->pluck('year')
             ->toArray();
         if (empty($availableYears)) {
-            $availableYears = [2026];
+            $availableYears = [$year];
         }
-        
-        // Default to 2026 if not in available years
-        if (!in_array(2026, $availableYears)) {
-            $availableYears[] = 2026;
+        if (!in_array($year, $availableYears, true)) {
+            $availableYears[] = $year;
             sort($availableYears);
         }
 
-        $year = (int) $request->get('year', 2026);
-        $selectedMonth = (int) $request->get('month', 1); // Default to January 2026
         $sort = $request->get('sort', 'desc') === 'asc' ? 'asc' : 'desc'; // default: most demand first
         $search = $request->get('search');
         $categoryId = $request->get('category_id');
@@ -90,6 +103,11 @@ class DemandForecastController extends Controller
             ->appends($request->query());
 
         // Add inventory gap and reorder calculations to each product
+        // NOTE: Even with the same historical sales data, forecast values differ across years (2026, 2027, 2028)
+        // because the trend projection formula uses: predicted = intercept + (slope × daysFromStart)
+        // where daysFromStart increases for later years, causing different projections.
+        // Example: If slope = +0.5 units/day, then Jan 2026 (365 days ahead) vs Jan 2027 (730 days ahead)
+        // will have different forecasts even though historical data is identical.
         foreach ($forecastProducts as $product) {
             // Get total forecasted demand for the selected month
             $monthStart = sprintf('%04d-%02d-01', $year, $selectedMonth);
@@ -100,9 +118,11 @@ class DemandForecastController extends Controller
                 ->sum('predicted_demand');
             
             // Calculate inventory gap: forecasted_demand - current_quantity
+            // This will differ across years because monthForecast differs (due to trend projection)
             $product->inventory_gap = $monthForecast - $product->quantity;
             
             // Reorder required if: forecasted_demand > current_quantity OR quantity <= reorder_level
+            // This will differ across years because monthForecast differs
             $product->reorder_required = ($monthForecast > $product->quantity) || ($product->quantity <= $product->reorder_level);
             
             // Store month forecast for display
@@ -152,11 +172,16 @@ class DemandForecastController extends Controller
     /**
      * Generate demand forecasts using Trend Projection Method
      * Uses linear regression to calculate trend and project future demand
+     * Can generate forecasts for multiple consecutive years (e.g., 2025, 2026, 2027)
+     * 
+     * @param int $startYear The first year to generate forecasts for
+     * @param int $yearCount Number of consecutive years to generate (default: 1)
      */
-    private function generateForecastUsingTrendProjection()
+    private function generateForecastUsingTrendProjection(int $startYear = 2026, int $yearCount = 1)
     {
         $products = Product::where('is_active', true)->get();
-        $forecastYear = 2026; // Forecast for 2026
+        $startYear = $startYear > 0 ? $startYear : (int) date('Y');
+        $yearCount = max(1, $yearCount);
         
         $forecastCount = 0;
         
@@ -223,64 +248,63 @@ class DemandForecastController extends Controller
             $slope = $trend['slope']; // Daily trend (units per day)
             $intercept = $trend['intercept'];
             $rSquared = $trend['r_squared']; // Goodness of fit (0-1)
-            
-            // Calculate base date for forecast (first day of forecast year)
-            $forecastStartDate = $forecastYear . '-01-01';
-            $forecastStartTimestamp = strtotime($forecastStartDate);
-            $daysToForecastStart = ($forecastStartTimestamp - $firstTimestamp) / 86400;
-            
-            // Generate forecasts for each day in 2026
-            for ($month = 1; $month <= 12; $month++) {
-                $daysInMonth = cal_days_in_month(CAL_GREGORIAN, $month, $forecastYear);
-                
-                for ($day = 1; $day <= $daysInMonth; $day++) {
-                    $forecastDate = $forecastYear . "-" . str_pad($month, 2, '0', STR_PAD_LEFT) . "-" . str_pad($day, 2, '0', STR_PAD_LEFT);
-                    
-                    $existing = DemandForecast::where('product_id', $product->id)
-                        ->where('forecast_date', $forecastDate)
-                        ->first();
-                    
-                    if (!$existing) {
-                        // Calculate days from first historical date to forecast date
-                        $forecastTimestamp = strtotime($forecastDate);
-                        $daysFromStart = ($forecastTimestamp - $firstTimestamp) / 86400;
-                        
-                        // Project demand using trend line: y = intercept + slope * x
-                        $baseProjection = $intercept + ($slope * $daysFromStart);
-                        
-                        // Apply seasonal adjustment based on month (use historical monthly pattern)
-                        $monthlyPattern = $this->getMonthlyPattern($dailyDemand, $month);
-                        $seasonalFactor = $monthlyPattern > 0 ? $monthlyPattern : 1.0;
-                        
-                        // Apply weekend adjustment
-                        $dayOfWeek = date('w', strtotime($forecastDate));
-                        $weekendFactor = ($dayOfWeek == 0 || $dayOfWeek == 6) ? 0.85 : 1.0;
-                        
-                        // Final prediction with trend, seasonal, and weekend adjustments
-                        $predicted = max(1, round($baseProjection * $seasonalFactor * $weekendFactor));
-                        
-                        // Confidence based on R-squared and data points
-                        $dataPoints = count($dailyDemand);
-                        $baseConfidence = min(90, 50 + ($rSquared * 30)); // R² contributes up to 30%
-                        $dataConfidence = min(10, $dataPoints / 10); // Data points contribute up to 10%
-                        $confidence = min(95, round($baseConfidence + $dataConfidence, 1));
-                        
-                        DemandForecast::create([
-                            'product_id' => $product->id,
-                            'forecast_date' => $forecastDate,
-                            'predicted_demand' => $predicted,
-                            'confidence_level' => $confidence,
-                            'method' => 'Trend Projection Method (Linear Regression)',
-                            'historical_data' => [
-                                'slope' => round($slope, 4),
-                                'intercept' => round($intercept, 2),
-                                'r_squared' => round($rSquared, 4),
-                                'data_points' => $dataPoints,
-                                'trend_direction' => $slope > 0 ? 'increasing' : ($slope < 0 ? 'decreasing' : 'stable')
-                            ],
-                        ]);
-                        
-                        $forecastCount++;
+
+            // Generate forecasts for each day in the requested year(s)
+            for ($yearOffset = 0; $yearOffset < $yearCount; $yearOffset++) {
+                $forecastYear = $startYear + $yearOffset;
+
+                for ($month = 1; $month <= 12; $month++) {
+                    $daysInMonth = cal_days_in_month(CAL_GREGORIAN, $month, $forecastYear);
+
+                    for ($day = 1; $day <= $daysInMonth; $day++) {
+                        $forecastDate = $forecastYear . "-" . str_pad($month, 2, '0', STR_PAD_LEFT) . "-" . str_pad($day, 2, '0', STR_PAD_LEFT);
+
+                        $existing = DemandForecast::where('product_id', $product->id)
+                            ->where('forecast_date', $forecastDate)
+                            ->first();
+
+                        if (!$existing) {
+                            // Calculate days from first historical date to forecast date
+                            $forecastTimestamp = strtotime($forecastDate);
+                            $daysFromStart = ($forecastTimestamp - $firstTimestamp) / 86400;
+
+                            // Project demand using trend line: y = intercept + slope * x
+                            $baseProjection = $intercept + ($slope * $daysFromStart);
+
+                            // Apply seasonal adjustment based on month (use historical monthly pattern)
+                            $monthlyPattern = $this->getMonthlyPattern($dailyDemand, $month);
+                            $seasonalFactor = $monthlyPattern > 0 ? $monthlyPattern : 1.0;
+
+                            // Apply weekend adjustment
+                            $dayOfWeek = date('w', strtotime($forecastDate));
+                            $weekendFactor = ($dayOfWeek == 0 || $dayOfWeek == 6) ? 0.85 : 1.0;
+
+                            // Final prediction with trend, seasonal, and weekend adjustments
+                            $predicted = max(1, round($baseProjection * $seasonalFactor * $weekendFactor));
+
+                            // Confidence based on R-squared and data points
+                            $dataPoints = count($dailyDemand);
+                            $baseConfidence = min(90, 50 + ($rSquared * 30)); // R² contributes up to 30%
+                            $dataConfidence = min(10, $dataPoints / 10); // Data points contribute up to 10%
+                            $confidence = min(95, round($baseConfidence + $dataConfidence, 1));
+
+                            DemandForecast::create([
+                                'product_id' => $product->id,
+                                'forecast_date' => $forecastDate,
+                                'predicted_demand' => $predicted,
+                                'confidence_level' => $confidence,
+                                'method' => 'Trend Projection Method (Linear Regression)',
+                                'historical_data' => [
+                                    'slope' => round($slope, 4),
+                                    'intercept' => round($intercept, 2),
+                                    'r_squared' => round($rSquared, 4),
+                                    'data_points' => $dataPoints,
+                                    'trend_direction' => $slope > 0 ? 'increasing' : ($slope < 0 ? 'decreasing' : 'stable')
+                                ],
+                            ]);
+
+                            $forecastCount++;
+                        }
                     }
                 }
             }
@@ -395,8 +419,12 @@ class DemandForecastController extends Controller
      * Based on historical sales data, shows top products for selected month
      * If category filter is provided, shows only that category. Otherwise shows all categories separately.
      */
-    private function getForecastDataForGraph(int $year = 2026, int $month = 1, ?int $confidenceMin = null, ?int $categoryFilter = null)
+    private function getForecastDataForGraph(int $year = 0, int $month = 1, ?int $confidenceMin = null, ?int $categoryFilter = null)
     {
+        if ($year <= 0) {
+            $year = (int) date('Y');
+        }
+
         $forecasts = DemandForecast::with('product.category')
             ->whereHas('product') // Only get forecasts where product still exists
             ->whereYear('forecast_date', $year)
