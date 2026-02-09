@@ -136,7 +136,10 @@ class POSController extends Controller
                     'subtotal' => $item['subtotal'],
                 ]);
 
+                // Decrement quantity and ensure updated_at is refreshed
                 $product->decrement('quantity', $item['quantity']);
+                // Explicitly touch the product to ensure updated_at is current
+                $product->touch();
 
                 InventoryMovement::create([
                     'product_id' => $product->id,

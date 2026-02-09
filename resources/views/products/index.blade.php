@@ -68,7 +68,7 @@
                             <th>Actions</th>
                         </tr>
                     </thead>
-                    <tbody>
+                    <tbody id="products-tbody">
                         @forelse($products as $product)
                         <tr>
                             <td>{{ $product->sku }}</td>
@@ -115,5 +115,173 @@
         </div>
     </div>
 </div>
+
+@if(auth()->user()->isStaff())
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+    console.log('📦 Products: Page loaded, setting up auto-refresh...');
+    
+    // Function to collect current product IDs
+    function collectProductIds() {
+        const rows = document.querySelectorAll('#products-tbody tr');
+        const ids = [];
+        rows.forEach(row => {
+            const productId = row.querySelector('a[href*="/products/"]');
+            if (productId) {
+                const href = productId.getAttribute('href');
+                const match = href.match(/\/products\/(\d+)/);
+                if (match) {
+                    ids.push(parseInt(match[1]));
+                }
+            }
+        });
+        return ids;
+    }
+    
+    // Function to update known IDs in localStorage
+    function updateKnownProductIds() {
+        const ids = collectProductIds();
+        const known = JSON.parse(localStorage.getItem('sync_known_ids') || '{"products":[],"categories":[],"movements":[]}');
+        known.products = ids;
+        localStorage.setItem('sync_known_ids', JSON.stringify(known));
+    }
+    
+    // Initial collection of IDs
+    updateKnownProductIds();
+    
+    // Function to reload products table
+    function reloadProductsTable() {
+        console.log('📦 Products: Reloading products table...');
+        // Get current filter parameters
+        const urlParams = new URLSearchParams(window.location.search);
+        const search = urlParams.get('search') || '';
+        const category = urlParams.get('category') || '';
+        const lowStock = urlParams.get('low_stock') || '';
+        const page = urlParams.get('page') || '1';
+        
+        // Build URL with current filters
+        let reloadUrl = '{{ route("products.index") }}?';
+        if (search) reloadUrl += 'search=' + encodeURIComponent(search) + '&';
+        if (category) reloadUrl += 'category=' + category + '&';
+        if (lowStock) reloadUrl += 'low_stock=' + lowStock + '&';
+        reloadUrl += 'page=' + page;
+        
+        // Fetch the page and extract products table
+        fetch(reloadUrl, {
+            headers: {
+                'X-Requested-With': 'XMLHttpRequest',
+                'Accept': 'text/html'
+            }
+        })
+        .then(response => response.text())
+        .then(html => {
+            // Parse the HTML response
+            const parser = new DOMParser();
+            const doc = parser.parseFromString(html, 'text/html');
+            const newTbody = doc.querySelector('#products-tbody');
+            const newPagination = doc.querySelector('.pagination');
+            
+            if (newTbody) {
+                const currentTbody = document.getElementById('products-tbody');
+                if (currentTbody && currentTbody.parentNode) {
+                    // Replace the tbody content
+                    currentTbody.innerHTML = newTbody.innerHTML;
+                    console.log('📦 Products: Products table reloaded');
+                    
+                    // Update pagination if it exists
+                    if (newPagination) {
+                        const currentPagination = document.querySelector('.pagination');
+                        if (currentPagination && currentPagination.parentNode) {
+                            currentPagination.outerHTML = newPagination.outerHTML;
+                        }
+                    }
+                    
+                    // Highlight first row briefly
+                    const rows = currentTbody.querySelectorAll('tr');
+                    if (rows.length > 0) {
+                        rows[0].style.backgroundColor = '#d4edda';
+                        setTimeout(() => {
+                            rows[0].style.transition = 'background-color 2s';
+                            rows[0].style.backgroundColor = '';
+                        }, 2000);
+                    }
+                    
+                    // Update known IDs after reload
+                    updateKnownProductIds();
+                }
+            }
+        })
+        .catch(err => {
+            console.error('📦 Products: Error reloading products table:', err);
+        });
+    }
+    
+    // Function to handle product deletions
+    function handleProductDeletions(deletedIds) {
+        console.log('🗑️ Products: Handling deletions:', deletedIds);
+        const tbody = document.getElementById('products-tbody');
+        if (!tbody) return;
+        
+        deletedIds.forEach(id => {
+            const rows = tbody.querySelectorAll('tr');
+            rows.forEach(row => {
+                const productLink = row.querySelector('a[href*="/products/' + id + '"]');
+                if (productLink) {
+                    row.remove();
+                    console.log('🗑️ Products: Removed product row:', id);
+                }
+            });
+        });
+        
+        // Update known IDs after deletion
+        updateKnownProductIds();
+        
+        // Reload table if any deletions occurred (to ensure consistency)
+        if (deletedIds.length > 0) {
+            setTimeout(() => reloadProductsTable(), 500);
+        }
+    }
+    
+    // Listen for product updates
+    window.addEventListener('sync:productUpdates', function(event) {
+        console.log('📦 Products: sync:productUpdates event received!', event);
+        const products = event.detail || [];
+        if (!products.length) {
+            return;
+        }
+        
+        console.log('📦 Products: Received product updates via polling:', products.length);
+        reloadProductsTable();
+    });
+    
+    // Listen for product deletions
+    window.addEventListener('sync:productsDeleted', function(event) {
+        console.log('🗑️ Products: sync:productsDeleted event received!', event);
+        const deletedIds = event.detail || [];
+        if (deletedIds.length > 0) {
+            handleProductDeletions(deletedIds);
+        }
+    });
+    
+    // Listen for category updates (categories affect products display)
+    window.addEventListener('sync:categoryUpdates', function(event) {
+        console.log('📦 Products: sync:categoryUpdates event received!', event);
+        const categories = event.detail || [];
+        if (!categories.length) {
+            return;
+        }
+        
+        console.log('📦 Products: Received category updates via polling:', categories.length);
+        reloadProductsTable();
+    });
+    
+    // Listen for category deletions (may affect products)
+    window.addEventListener('sync:categoriesDeleted', function(event) {
+        console.log('🗑️ Products: sync:categoriesDeleted event received!', event);
+        reloadProductsTable();
+    });
+});
+</script>
+@endif
 @endsection
 

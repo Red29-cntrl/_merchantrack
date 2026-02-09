@@ -46,13 +46,16 @@ class SaleController extends Controller
         }
 
         // Sorting
-        $sortBy = $request->get('sort_by', 'sale_number');
+        $sortBy = $request->get('sort_by', 'date'); // Default to date instead of sale_number
         $sortOrder = $request->get('sort_order', 'desc');
         
         switch ($sortBy) {
             case 'sale_number':
-                // Sort by sale number (natural sort for INV-YYYYMMDD-XXXX format)
-                $query->orderBy('sale_number', $sortOrder);
+                // Sort by sale number (natural sort for 0000-0000-0000-XXXX format)
+                // Extract numeric part (last segment) for proper sorting
+                // Use LENGTH to handle variable-length numbers correctly
+                $query->orderByRaw('CAST(SUBSTRING_INDEX(sale_number, "-", -1) AS UNSIGNED) ' . strtoupper($sortOrder))
+                      ->orderBy('sale_number', $sortOrder); // Secondary sort for consistency
                 break;
             case 'total':
                 $query->orderBy('total', $sortOrder);

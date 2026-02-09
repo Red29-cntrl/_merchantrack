@@ -70,10 +70,36 @@
             </div>
 
             <div class="mt-3">
-                <a href="{{ route('sales.index') }}" class="btn btn-secondary">Back to Sales</a>
+                <button onclick="goBack()" class="btn btn-secondary">Close</button>
             </div>
         </div>
     </div>
 </div>
 @endsection
 
+@section('scripts')
+<script>
+function goBack() {
+    // Check if user came from dashboard
+    const referrer = document.referrer;
+    const dashboardUrl = '{{ route("dashboard") }}';
+    const salesIndexUrl = '{{ route("sales.index") }}';
+    
+    console.log('Referrer:', referrer);
+    
+    // If referrer contains dashboard, go back to dashboard
+    if (referrer && (referrer.includes('/dashboard') || referrer.indexOf('dashboard') !== -1)) {
+        console.log('Going back to dashboard');
+        window.location.href = dashboardUrl;
+    } else if (window.history.length > 1) {
+        // Use browser back if available
+        console.log('Using browser back');
+        window.history.back();
+    } else {
+        // Fallback to sales index
+        console.log('Fallback to sales index');
+        window.location.href = salesIndexUrl;
+    }
+}
+</script>
+@endsection

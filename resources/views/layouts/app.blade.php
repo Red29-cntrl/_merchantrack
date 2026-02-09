@@ -37,6 +37,10 @@
         body {
             background-color: #ffffff;
         }
+        /* Ensure all clickable elements have proper cursor */
+        a, button, .btn {
+            cursor: pointer;
+        }
         .sidebar {
             min-height: 100vh;
             background: #4C1D3D;
@@ -63,7 +67,8 @@
             padding: 12px 20px;
             margin: 5px 10px;
             border-radius: 8px;
-            transition: all 0.3s;
+            cursor: pointer;
+            transition: background-color 0.3s, color 0.3s;
         }
         .sidebar .nav-link:hover, .sidebar .nav-link.active {
             background: rgba(255,255,255,0.2);
@@ -112,6 +117,7 @@
             background-color: #852E4E;
             border-color: #852E4E;
             color: #ffffff;
+            cursor: pointer;
         }
         .btn-primary:hover {
             background-color: #4C1D3D;
@@ -121,6 +127,7 @@
             background-color: #FFBB94;
             border-color: #DC586D;
             color: #4C1D3D;
+            cursor: pointer;
         }
         .btn-secondary:hover {
             background-color: #FB9590;
@@ -130,6 +137,7 @@
             background-color: #852E4E;
             border-color: #852E4E;
             color: #ffffff;
+            cursor: pointer;
         }
         .btn-warning:hover {
             background-color: #4C1D3D;
@@ -139,6 +147,7 @@
             background-color: #A33757;
             border-color: #A33757;
             color: #ffffff;
+            cursor: pointer;
         }
         .btn-danger:hover {
             background-color: #852E4E;
@@ -148,6 +157,7 @@
             background-color: #852E4E;
             border-color: #852E4E;
             color: #ffffff;
+            cursor: pointer;
         }
         .btn-info:hover {
             background-color: #4C1D3D;
@@ -157,6 +167,7 @@
             background-color: #A33757;
             border-color: #A33757;
             color: #ffffff;
+            cursor: pointer;
         }
         .btn-success:hover {
             background-color: #852E4E;
@@ -354,44 +365,205 @@
         // Store user role in JavaScript for reliable access
         const CURRENT_USER_ROLE = '{{ auth()->user()->role }}';
         console.log('Current user role:', CURRENT_USER_ROLE);
-        let lastSyncTime = new Date().toISOString();
+        
+        // Helper function to check if admin (available before other scripts)
+        function isAdmin() {
+            return CURRENT_USER_ROLE === 'admin';
+        }
+        
+        // Initialize lastSyncTime to 10 seconds before page load to catch recent sales
+        // This ensures we don't miss sales created just before the page loaded
+        // Using 10 seconds instead of 1 minute to avoid too much data on first load
+        let lastSyncTime = new Date(Date.now() - 10000).toISOString(); // 10 seconds ago
+        console.log('🔄 Initial lastSyncTime set to:', lastSyncTime, '(10 seconds ago)');
         let syncInterval = null;
         let websocketConnected = false;
         
+        // Track known IDs for deletion detection
+        function getKnownIds() {
+            const stored = localStorage.getItem('sync_known_ids');
+            if (stored) {
+                try {
+                    return JSON.parse(stored);
+                } catch (e) {
+                    return { products: [], categories: [], movements: [] };
+                }
+            }
+            return { products: [], categories: [], movements: [] };
+        }
+        
+        function updateKnownIds(type, ids) {
+            const known = getKnownIds();
+            known[type] = ids;
+            localStorage.setItem('sync_known_ids', JSON.stringify(known));
+        }
+        
         // Fallback polling sync (works even without WebSocket)
         function startPollingSync() {
-            if (syncInterval) return; // Already started
+            if (syncInterval) {
+                console.log('🔄 Polling sync already running');
+                return; // Already started
+            }
             
-            console.log('🔄 Starting polling sync (fallback mode)...');
+            console.log('🔄 Starting polling sync...');
+            console.log('🔄 Initial lastSyncTime:', lastSyncTime);
+            
+            // Update sync status indicator
+            const syncStatusEl = document.getElementById('sync-status');
+            if (syncStatusEl) {
+                syncStatusEl.innerHTML = '<i class="fas fa-sync-alt fa-spin"></i> Syncing...';
+                syncStatusEl.className = 'text-muted';
+            }
+            
+            // Do first check immediately
+            const knownIds = getKnownIds();
+            const params = new URLSearchParams();
+            params.append('last_sync', lastSyncTime);
+            params.append('known_product_ids', JSON.stringify(knownIds.products));
+            params.append('known_category_ids', JSON.stringify(knownIds.categories));
+            params.append('known_movement_ids', JSON.stringify(knownIds.movements));
+            const syncUrl = '{{ route("sync.changes") }}?' + params.toString();
+            
+            fetch(syncUrl)
+                .then(response => {
+                    if (!response.ok) {
+                        throw new Error('HTTP error! status: ' + response.status);
+                    }
+                    return response.json();
+                })
+                .then(data => {
+                    console.log('🔄 First sync check - Sales:', data.sales?.length || 0, 'Products:', data.products?.length || 0, 'Categories:', data.categories?.length || 0);
+                    if (data.sales && data.sales.length > 0) {
+                        console.log('📊 New sales detected on first check:', data.sales.length);
+                        window.dispatchEvent(new CustomEvent('sync:newSales', { detail: data.sales }));
+                    }
+                    if (data.products && data.products.length > 0) {
+                        console.log('📦 Product updates detected on first check:', data.products.length);
+                        window.dispatchEvent(new CustomEvent('sync:productUpdates', { detail: data.products }));
+                    }
+                    if (data.products_deleted && data.products_deleted.length > 0) {
+                        console.log('🗑️ Products deleted detected on first check:', data.products_deleted.length);
+                        window.dispatchEvent(new CustomEvent('sync:productsDeleted', { detail: data.products_deleted }));
+                    }
+                    if (data.categories && data.categories.length > 0) {
+                        console.log('🏷️ Category updates detected on first check:', data.categories.length);
+                        window.dispatchEvent(new CustomEvent('sync:categoryUpdates', { detail: data.categories }));
+                    }
+                    if (data.categories_deleted && data.categories_deleted.length > 0) {
+                        console.log('🗑️ Categories deleted detected on first check:', data.categories_deleted.length);
+                        window.dispatchEvent(new CustomEvent('sync:categoriesDeleted', { detail: data.categories_deleted }));
+                    }
+                    if (data.inventory_movements && data.inventory_movements.length > 0) {
+                        console.log('📋 Inventory movements detected on first check:', data.inventory_movements.length);
+                        window.dispatchEvent(new CustomEvent('sync:inventoryMovements', { detail: data.inventory_movements }));
+                    }
+                    if (data.inventory_movements_deleted && data.inventory_movements_deleted.length > 0) {
+                        console.log('🗑️ Inventory movements deleted detected on first check:', data.inventory_movements_deleted.length);
+                        window.dispatchEvent(new CustomEvent('sync:inventoryMovementsDeleted', { detail: data.inventory_movements_deleted }));
+                    }
+                    if (data.timestamp) {
+                        lastSyncTime = data.timestamp;
+                        console.log('🔄 Updated lastSyncTime to:', lastSyncTime);
+                    }
+                })
+                .catch(err => {
+                    console.error('Sync polling error (first check):', err);
+                    console.error('   → Check if route sync.changes is accessible');
+                    console.error('   → Check browser console for CORS or 404 errors');
+                    
+                    // Update sync status indicator to show error
+                    const syncStatusEl = document.getElementById('sync-status');
+                    if (syncStatusEl) {
+                        syncStatusEl.innerHTML = '<i class="fas fa-exclamation-triangle"></i> Sync Error';
+                        syncStatusEl.className = 'text-danger';
+                    }
+                });
+            
+            // Then check every 3 seconds
             syncInterval = setInterval(function() {
-                fetch('{{ route("sync.changes") }}?last_sync=' + encodeURIComponent(lastSyncTime))
-                    .then(response => response.json())
+                console.log('🔄 Polling sync check - lastSyncTime:', lastSyncTime);
+                const knownIds = getKnownIds();
+                const params = new URLSearchParams();
+                params.append('last_sync', lastSyncTime);
+                params.append('known_product_ids', JSON.stringify(knownIds.products));
+                params.append('known_category_ids', JSON.stringify(knownIds.categories));
+                params.append('known_movement_ids', JSON.stringify(knownIds.movements));
+                const syncUrl = '{{ route("sync.changes") }}?' + params.toString();
+                
+                fetch(syncUrl)
+                    .then(response => {
+                        if (!response.ok) {
+                            throw new Error('HTTP error! status: ' + response.status);
+                        }
+                        return response.json();
+                    })
                     .then(data => {
                         if (data.sales && data.sales.length > 0) {
-                            console.log('📊 New sales detected:', data.sales.length);
+                            console.log('📊 New sales detected:', data.sales.length, data.sales);
                             // Trigger custom event for pages to handle
                             window.dispatchEvent(new CustomEvent('sync:newSales', { detail: data.sales }));
                         }
                         if (data.products && data.products.length > 0) {
-                            console.log('📦 Product updates detected:', data.products.length);
+                            console.log('📦 Product updates detected:', data.products.length, data.products);
                             // Trigger custom event for pages to handle
                             window.dispatchEvent(new CustomEvent('sync:productUpdates', { detail: data.products }));
+                        }
+                        if (data.products_deleted && data.products_deleted.length > 0) {
+                            console.log('🗑️ Products deleted detected:', data.products_deleted.length, data.products_deleted);
+                            // Trigger custom event for pages to handle
+                            window.dispatchEvent(new CustomEvent('sync:productsDeleted', { detail: data.products_deleted }));
+                        }
+                        if (data.categories && data.categories.length > 0) {
+                            console.log('🏷️ Category updates detected:', data.categories.length, data.categories);
+                            // Trigger custom event for pages to handle
+                            window.dispatchEvent(new CustomEvent('sync:categoryUpdates', { detail: data.categories }));
+                        }
+                        if (data.categories_deleted && data.categories_deleted.length > 0) {
+                            console.log('🗑️ Categories deleted detected:', data.categories_deleted.length, data.categories_deleted);
+                            // Trigger custom event for pages to handle
+                            window.dispatchEvent(new CustomEvent('sync:categoriesDeleted', { detail: data.categories_deleted }));
+                        }
+                        if (data.inventory_movements && data.inventory_movements.length > 0) {
+                            console.log('📋 Inventory movements detected:', data.inventory_movements.length, data.inventory_movements);
+                            // Trigger custom event for pages to handle
+                            window.dispatchEvent(new CustomEvent('sync:inventoryMovements', { detail: data.inventory_movements }));
+                        }
+                        if (data.inventory_movements_deleted && data.inventory_movements_deleted.length > 0) {
+                            console.log('🗑️ Inventory movements deleted detected:', data.inventory_movements_deleted.length, data.inventory_movements_deleted);
+                            // Trigger custom event for pages to handle
+                            window.dispatchEvent(new CustomEvent('sync:inventoryMovementsDeleted', { detail: data.inventory_movements_deleted }));
                         }
                         if (data.timestamp) {
                             lastSyncTime = data.timestamp;
                         }
                     })
                     .catch(err => {
-                        console.warn('Sync polling error:', err);
+                        console.error('Sync polling error:', err);
+                        console.error('   → Route: {{ route("sync.changes") }}');
+                        console.error('   → Check if server is running and route is accessible');
                     });
-            }, 3000); // Check every 3 seconds
+            }, 5000); // Check every 5 seconds (reduced frequency for better performance)
+            
+            console.log('✅ Polling sync started successfully');
         }
         
         function setupSync() {
-            if (typeof window.Echo === 'undefined') {
-                console.warn('⚠️ Laravel Echo is not available. Using polling fallback.');
-                console.warn('   → For WebSocket support: npm run production');
+            // ALWAYS start polling immediately - this is the primary sync method
+            console.log('🔄 Setting up sync - starting polling sync immediately...');
+            if (!syncInterval) {
                 startPollingSync();
+            } else {
+                console.log('🔄 Polling already running, skipping start');
+            }
+            
+            if (typeof window.Echo === 'undefined') {
+                console.warn('⚠️ Laravel Echo is not available. Using polling only.');
+                console.warn('   → For WebSocket support: npm run production');
+                // Ensure polling is running
+                if (!syncInterval) {
+                    console.log('🔄 Starting polling as fallback...');
+                    startPollingSync();
+                }
                 return false;
             }
             try {
@@ -410,10 +582,14 @@
                     if (states.current === 'connected') {
                         console.log('✓ WebSocket connected successfully!');
                         websocketConnected = true;
-                        if (syncInterval) {
+                        // Keep polling running for admin users as backup
+                        // Only disable polling if not admin
+                        if (!isAdmin() && syncInterval) {
                             clearInterval(syncInterval);
                             syncInterval = null;
                             console.log('✓ Switched to WebSocket mode (polling disabled)');
+                        } else {
+                            console.log('✓ WebSocket connected, but keeping polling active for admin users');
                         }
                     } else if (states.current === 'failed' || states.current === 'disconnected') {
                         console.warn('⚠️ WebSocket disconnected. Falling back to polling...');
@@ -431,18 +607,20 @@
                     }
                 });
                 
-                // If not connected after 5 seconds, start polling
+                // If not connected after 2 seconds, ensure polling is running
                 setTimeout(function() {
                     if (!websocketConnected && !syncInterval) {
-                        console.warn('⚠️ WebSocket not connected after 5s. Starting polling fallback...');
+                        console.warn('⚠️ WebSocket not connected after 2s. Starting polling fallback...');
                         startPollingSync();
                     }
-                }, 5000);
+                }, 2000);
                 
                 return true;
             } catch (e) {
                 console.error('✗ Real-time sync setup failed:', e);
-                startPollingSync();
+                if (!syncInterval) {
+                    startPollingSync();
+                }
                 return false;
             }
         }
@@ -452,10 +630,175 @@
             if (attempt < 25) setTimeout(function() { trySetup(attempt + 1); }, 200);
         }
         
-        if (document.readyState === 'loading') {
-            document.addEventListener('DOMContentLoaded', function() { trySetup(0); });
-        } else {
+        // Start sync immediately - don't wait for DOMContentLoaded
+        console.log('🔄 Initializing sync system...');
+        console.log('🔄 Document ready state:', document.readyState);
+        
+        // Start immediately if document is already loaded
+        if (document.readyState === 'complete' || document.readyState === 'interactive') {
+            console.log('🔄 Document already loaded, starting sync now...');
             trySetup(0);
+        } else {
+            // Otherwise wait for DOMContentLoaded
+            console.log('🔄 Waiting for DOMContentLoaded...');
+            document.addEventListener('DOMContentLoaded', function() {
+                console.log('🔄 DOMContentLoaded fired, starting sync...');
+                trySetup(0);
+            });
+        }
+        
+        // Also try immediately (in case DOMContentLoaded already fired)
+        setTimeout(function() {
+            if (!syncInterval) {
+                console.log('🔄 Fallback: Starting sync after 500ms delay...');
+                trySetup(0);
+            }
+        }, 500);
+    })();
+    </script>
+    
+    <!-- Global auto-reload for list pages so data stays in sync without manual refresh -->
+    <script>
+    (function() {
+        'use strict';
+
+        // Expose current route name from Laravel for per-page decisions
+        window.CURRENT_ROUTE_NAME = '{{ \Illuminate\Support\Facades\Route::currentRouteName() }}';
+        console.log('📍 Current route:', window.CURRENT_ROUTE_NAME);
+
+        function isAdmin() {
+            return (typeof CURRENT_USER_ROLE !== 'undefined') && CURRENT_USER_ROLE === 'admin';
+        }
+
+        function isStaff() {
+            return (typeof CURRENT_USER_ROLE !== 'undefined') && CURRENT_USER_ROLE === 'staff';
+        }
+
+        function isProtectedRoute() {
+            // Routes where users typically type or edit data and must not lose input
+            var protectedRoutes = [
+                'pos.index',           // cart & search
+                'products.create',
+                'products.edit',
+                'categories.create',
+                'categories.edit',
+                'suppliers.create',
+                'suppliers.edit'
+            ];
+            return protectedRoutes.indexOf(window.CURRENT_ROUTE_NAME) !== -1;
+        }
+
+        function isUserActivelyTyping() {
+            var el = document.activeElement;
+            if (!el) return false;
+            var tag = (el.tagName || '').toUpperCase();
+            if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') {
+                return true;
+            }
+            if (el.isContentEditable) {
+                return true;
+            }
+            return false;
+        }
+
+        function scheduleReload() {
+            // Never auto-reload when user is on a protected route or actively typing,
+            // to avoid losing form input or search text.
+            // Exception: sales.index should reload even if user is not actively typing
+            const isSalesIndex = window.CURRENT_ROUTE_NAME === 'sales.index';
+            const isDashboard = window.CURRENT_ROUTE_NAME === 'dashboard';
+            
+            if (isProtectedRoute()) {
+                console.log('🔄 Global Sync: Change detected but on protected route; skipping auto-reload.');
+                return;
+            }
+            
+            // For sales.index and dashboard, only skip if user is actively typing in an input
+            if (!isSalesIndex && !isDashboard && isUserActivelyTyping()) {
+                console.log('🔄 Global Sync: Change detected but user is editing/typing; skipping auto-reload.');
+                return;
+            }
+            
+            // For sales.index, allow reload even if user clicked on a filter (but not typing)
+            if (isSalesIndex && isUserActivelyTyping()) {
+                console.log('🔄 Global Sync: User typing on sales page; will reload after delay...');
+                // Still reload but with longer delay
+                setTimeout(function() {
+                    if (!isUserActivelyTyping()) {
+                        window.location.reload();
+                    }
+                }, 2000);
+                return;
+            }
+
+            if (window.__globalAutoReloadScheduled) {
+                console.log('🔄 Global Sync: Reload already scheduled, skipping duplicate.');
+                return;
+            }
+            window.__globalAutoReloadScheduled = true;
+            console.log('🔄 Global Sync: Data change detected, reloading page in 700ms...');
+            setTimeout(function() {
+                console.log('🔄 Global Sync: Executing page reload now...');
+                window.location.reload();
+            }, 700);
+        }
+
+        // When new sales are detected (polling fallback)
+        window.addEventListener('sync:newSales', function(event) {
+            var sales = event.detail || [];
+            if (!sales.length) return;
+
+            console.log('📊 Global Sync: New sales detected via polling:', sales.length, 'Current route:', window.CURRENT_ROUTE_NAME);
+            
+            // Dashboard uses page reload, sales.index uses DOM updates (handled in sales/index.blade.php)
+            if (isAdmin() && window.CURRENT_ROUTE_NAME === 'dashboard') {
+                console.log('📊 Global Sync: Reloading dashboard for new sales...');
+                scheduleReload();
+            }
+            // sales.index handles updates via DOM manipulation (no reload needed)
+        });
+
+        // When product updates are detected (polling fallback)
+        window.addEventListener('sync:productUpdates', function(event) {
+            var products = event.detail || [];
+            if (!products.length) return;
+
+            console.log('📦 Global Sync: Product updates detected via polling:', products.length, 'Current route:', window.CURRENT_ROUTE_NAME);
+            
+            // Pages handle their own DOM updates (no reload needed)
+            // inventory.index, dashboard, and products.index will handle updates via DOM manipulation
+        });
+
+        // Also hook into WebSocket events if Echo is available
+        if (typeof Echo !== 'undefined') {
+            try {
+                // New sales
+                Echo.channel('sales')
+                    .listen('.sale.created', function(e) {
+                        console.log('📊 Global Sync: New sale via WebSocket:', e.sale, 'Current route:', window.CURRENT_ROUTE_NAME);
+                        // Dashboard uses page reload, sales.index uses DOM updates (handled in sales/index.blade.php)
+                        if (isAdmin() && window.CURRENT_ROUTE_NAME === 'dashboard') {
+                            console.log('📊 Global Sync: Reloading dashboard for new sale...');
+                            scheduleReload();
+                        }
+                        // sales.index handles updates via DOM manipulation (no reload needed)
+                    });
+
+                // Product & inventory updates
+                Echo.channel('products')
+                    .listen('.product.updated', function(e) {
+                        console.log('📦 Global Sync: Product updated via WebSocket:', e.product, 'Current route:', window.CURRENT_ROUTE_NAME);
+                        // Pages handle their own DOM updates (no reload needed)
+                    });
+
+                Echo.channel('inventory')
+                    .listen('.inventory.updated', function(e) {
+                        console.log('📦 Global Sync: Inventory updated via WebSocket:', e.product, 'Current route:', window.CURRENT_ROUTE_NAME);
+                        // Pages handle their own DOM updates (no reload needed)
+                    });
+            } catch (e) {
+                console.error('Global Sync: Failed to attach Echo listeners', e);
+            }
         }
     })();
     </script>

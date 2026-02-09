@@ -79,14 +79,14 @@
                             <th>Status</th>
                         </tr>
                     </thead>
-                    <tbody>
+                    <tbody id="staff-products-tbody">
                         @forelse($products as $product)
-                        <tr>
+                        <tr data-product-id="{{ $product->id }}">
                             <td>{{ $product->name }}</td>
                             <td>{{ $product->sku }}</td>
                             <td>{{ $product->category->name }}</td>
                             <td>
-                                <span class="badge bg-{{ $product->isLowStock() ? 'warning' : 'success' }}">
+                                <span class="badge bg-{{ $product->isLowStock() ? 'warning' : 'success' }}" data-product-quantity="{{ $product->quantity }}">
                                     {{ number_format($product->quantity, 0) }}
                                 </span>
                             </td>
@@ -94,7 +94,7 @@
                                 <span class="text-muted">{{ $product->unit ? ucfirst($product->unit) : 'Pcs' }}</span>
                             </td>
                             <td>
-                                <span class="badge bg-{{ $product->isLowStock() ? 'warning' : 'success' }}">
+                                <span class="badge bg-{{ $product->isLowStock() ? 'warning' : 'success' }}" data-product-status>
                                     {{ $product->isLowStock() ? 'Low Stock' : 'In Stock' }}
                                 </span>
                             </td>
@@ -210,19 +210,19 @@
                             <th>Status</th>
                         </tr>
                     </thead>
-                    <tbody>
+                    <tbody id="balance-products-tbody">
                         @forelse($balanceProducts as $product)
-                        <tr>
+                        <tr data-product-id="{{ $product->id }}">
                             <td>{{ $product->name }}</td>
                             <td>{{ $product->sku }}</td>
                             <td>{{ $product->category->name ?? 'N/A' }}</td>
                             <td>
-                                <span class="badge bg-info">
+                                <span class="badge bg-info" data-product-current-stock="{{ $product->current_stock ?? $product->quantity }}">
                                     {{ number_format($product->current_stock ?? $product->quantity, 0) }}
                                 </span>
                             </td>
                             <td>
-                                <span class="badge bg-{{ $product->isLowStock() ? 'warning' : 'success' }}">
+                                <span class="badge bg-{{ $product->isLowStock() ? 'warning' : 'success' }}" data-product-balance="{{ $product->balance ?? $product->quantity }}">
                                     {{ number_format($product->balance ?? $product->quantity, 0) }}
                                 </span>
                             </td>
@@ -230,7 +230,7 @@
                                 <span class="text-muted">{{ $product->unit ? ucfirst($product->unit) : 'Pcs' }}</span>
                             </td>
                             <td>
-                                <span class="badge bg-{{ $product->isLowStock() ? 'warning' : 'success' }}">
+                                <span class="badge bg-{{ $product->isLowStock() ? 'warning' : 'success' }}" data-product-status>
                                     {{ $product->isLowStock() ? 'Low Stock' : 'In Stock' }}
                                 </span>
                             </td>
@@ -257,10 +257,10 @@
                             <th><strong>Staff</strong></th>
                         </tr>
                     </thead>
-                    <tbody>
+                    <tbody id="movements-tbody">
                         @forelse($movements as $movement)
                         @if($movement->product)
-                        <tr>
+                        <tr data-movement-id="{{ $movement->id }}" data-product-id="{{ $movement->product->id }}">
                             <td>{{ $movement->created_at->setTimezone('Asia/Manila')->format('M d, Y h:i:s A') }}</td>
                             <td>{{ $movement->product->name }}</td>
                             <td>{{ number_format($movement->opening_balance ?? 0, 0) }}</td>
@@ -284,7 +284,7 @@
                         </tr>
                         @endif
                         @empty
-                        <tr>
+                        <tr id="no-movements-row">
                             <td colspan="8" class="text-center py-5">
                                 <i class="fas fa-inbox fa-3x text-muted mb-3 d-block"></i>
                                 <p class="text-muted mb-0">No inventory movements found</p>
@@ -373,6 +373,575 @@ document.getElementById('adjustForm').addEventListener('submit', function(e) {
     form.action = '/inventory/adjust/' + productId;
 });
 </script>
+
+@if(auth()->user()->isStaff())
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+    console.log('📦 Inventory (Staff): Page loaded, setting up auto-refresh...');
+    
+    // Function to collect current product IDs from staff products table
+    function collectStaffProductIds() {
+        const rows = document.querySelectorAll('#staff-products-tbody tr[data-product-id]');
+        const ids = [];
+        rows.forEach(row => {
+            const productId = row.getAttribute('data-product-id');
+            if (productId) {
+                ids.push(parseInt(productId));
+            }
+        });
+        return ids;
+    }
+    
+    // Function to collect current movement IDs
+    function collectMovementIds() {
+        const rows = document.querySelectorAll('#movements-tbody tr[data-movement-id]');
+        const ids = [];
+        rows.forEach(row => {
+            const movementId = row.getAttribute('data-movement-id');
+            if (movementId) {
+                ids.push(parseInt(movementId));
+            }
+        });
+        return ids;
+    }
+    
+    // Function to update known IDs in localStorage
+    function updateKnownIds() {
+        const productIds = collectStaffProductIds();
+        const movementIds = collectMovementIds();
+        const known = JSON.parse(localStorage.getItem('sync_known_ids') || '{"products":[],"categories":[],"movements":[]}');
+        known.products = productIds;
+        known.movements = movementIds;
+        localStorage.setItem('sync_known_ids', JSON.stringify(known));
+    }
+    
+    // Initial collection of IDs
+    updateKnownIds();
+    
+    // Function to reload products table (staff view)
+    function reloadStaffProductsTable() {
+        console.log('📦 Inventory (Staff): Reloading products table...');
+        const urlParams = new URLSearchParams(window.location.search);
+        const page = urlParams.get('page') || '1';
+        
+        let reloadUrl = '{{ route("inventory.index") }}?page=' + page;
+        
+        fetch(reloadUrl, {
+            headers: {
+                'X-Requested-With': 'XMLHttpRequest',
+                'Accept': 'text/html'
+            }
+        })
+        .then(response => response.text())
+        .then(html => {
+            const parser = new DOMParser();
+            const doc = parser.parseFromString(html, 'text/html');
+            const newTbody = doc.querySelector('#staff-products-tbody');
+            
+            if (newTbody) {
+                const currentTbody = document.getElementById('staff-products-tbody');
+                if (currentTbody && currentTbody.parentNode) {
+                    currentTbody.innerHTML = newTbody.innerHTML;
+                    console.log('📦 Inventory (Staff): Products table reloaded');
+                    
+                    // Highlight first row briefly
+                    const rows = currentTbody.querySelectorAll('tr');
+                    if (rows.length > 0) {
+                        rows[0].style.backgroundColor = '#d4edda';
+                        setTimeout(() => {
+                            rows[0].style.transition = 'background-color 2s';
+                            rows[0].style.backgroundColor = '';
+                        }, 2000);
+                    }
+                    
+                    // Update known IDs after reload
+                    updateKnownIds();
+                }
+            }
+        })
+        .catch(err => {
+            console.error('📦 Inventory (Staff): Error reloading products table:', err);
+        });
+    }
+    
+    // Function to handle product deletions
+    function handleProductDeletions(deletedIds) {
+        console.log('🗑️ Inventory (Staff): Handling product deletions:', deletedIds);
+        const tbody = document.getElementById('staff-products-tbody');
+        if (!tbody) return;
+        
+        deletedIds.forEach(id => {
+            const row = tbody.querySelector(`tr[data-product-id="${id}"]`);
+            if (row) {
+                row.remove();
+                console.log('🗑️ Inventory (Staff): Removed product row:', id);
+            }
+        });
+        
+        // Update known IDs after deletion
+        updateKnownIds();
+        
+        // Reload table if any deletions occurred
+        if (deletedIds.length > 0) {
+            setTimeout(() => reloadStaffProductsTable(), 500);
+        }
+    }
+    
+    // Function to handle movement deletions
+    function handleMovementDeletions(deletedIds) {
+        console.log('🗑️ Inventory (Staff): Handling movement deletions:', deletedIds);
+        const tbody = document.getElementById('movements-tbody');
+        if (!tbody) return;
+        
+        deletedIds.forEach(id => {
+            const row = tbody.querySelector(`tr[data-movement-id="${id}"]`);
+            if (row) {
+                row.remove();
+                console.log('🗑️ Inventory (Staff): Removed movement row:', id);
+            }
+        });
+        
+        // Update known IDs after deletion
+        updateKnownIds();
+        
+        // Reload table if any deletions occurred
+        if (deletedIds.length > 0) {
+            setTimeout(() => reloadMovementsTable(), 500);
+        }
+    }
+    
+    // Function to reload movements table
+    function reloadMovementsTable() {
+        console.log('📋 Inventory (Staff): Reloading movements table...');
+        const urlParams = new URLSearchParams(window.location.search);
+        const productId = urlParams.get('product_id') || '';
+        const type = urlParams.get('type') || '';
+        const month = urlParams.get('month') || '';
+        const year = urlParams.get('year') || new Date().getFullYear();
+        
+        let reloadUrl = '{{ route("inventory.index") }}?';
+        if (productId) reloadUrl += 'product_id=' + productId + '&';
+        if (type) reloadUrl += 'type=' + type + '&';
+        if (month) reloadUrl += 'month=' + month + '&';
+        reloadUrl += 'year=' + year;
+        
+        fetch(reloadUrl, {
+            headers: {
+                'X-Requested-With': 'XMLHttpRequest',
+                'Accept': 'text/html'
+            }
+        })
+        .then(response => response.text())
+        .then(html => {
+            const parser = new DOMParser();
+            const doc = parser.parseFromString(html, 'text/html');
+            const newTbody = doc.querySelector('#movements-tbody');
+            
+            if (newTbody) {
+                const currentTbody = document.getElementById('movements-tbody');
+                if (currentTbody && currentTbody.parentNode) {
+                    currentTbody.innerHTML = newTbody.innerHTML;
+                    console.log('📋 Inventory (Staff): Movements table reloaded');
+                    
+                    // Highlight new rows
+                    const rows = currentTbody.querySelectorAll('tr[data-movement-id]');
+                    if (rows.length > 0) {
+                        rows[0].style.backgroundColor = '#d4edda';
+                        setTimeout(() => {
+                            rows[0].style.transition = 'background-color 2s';
+                            rows[0].style.backgroundColor = '';
+                        }, 2000);
+                    }
+                    
+                    // Update known IDs after reload
+                    updateKnownIds();
+                }
+            }
+        })
+        .catch(err => {
+            console.error('📋 Inventory (Staff): Error reloading movements table:', err);
+        });
+    }
+    
+    // Listen for product updates
+    window.addEventListener('sync:productUpdates', function(event) {
+        console.log('📦 Inventory (Staff): sync:productUpdates event received!', event);
+        const products = event.detail || [];
+        if (products.length > 0) {
+            console.log('📦 Inventory (Staff): Received product updates:', products.length);
+            reloadStaffProductsTable();
+        }
+    });
+    
+    // Listen for product deletions
+    window.addEventListener('sync:productsDeleted', function(event) {
+        console.log('🗑️ Inventory (Staff): sync:productsDeleted event received!', event);
+        const deletedIds = event.detail || [];
+        if (deletedIds.length > 0) {
+            handleProductDeletions(deletedIds);
+        }
+    });
+    
+    // Listen for category updates
+    window.addEventListener('sync:categoryUpdates', function(event) {
+        console.log('📦 Inventory (Staff): sync:categoryUpdates event received!', event);
+        const categories = event.detail || [];
+        if (categories.length > 0) {
+            console.log('📦 Inventory (Staff): Received category updates:', categories.length);
+            reloadStaffProductsTable();
+        }
+    });
+    
+    // Listen for inventory movements
+    window.addEventListener('sync:inventoryMovements', function(event) {
+        console.log('📋 Inventory (Staff): sync:inventoryMovements event received!', event);
+        const movements = event.detail || [];
+        if (movements.length > 0) {
+            console.log('📋 Inventory (Staff): Received inventory movements:', movements.length);
+            reloadMovementsTable();
+            reloadStaffProductsTable(); // Also refresh products table
+        }
+    });
+    
+    // Listen for movement deletions
+    window.addEventListener('sync:inventoryMovementsDeleted', function(event) {
+        console.log('🗑️ Inventory (Staff): sync:inventoryMovementsDeleted event received!', event);
+        const deletedIds = event.detail || [];
+        if (deletedIds.length > 0) {
+            handleMovementDeletions(deletedIds);
+        }
+    });
+});
+</script>
+@endif
+
+@if(auth()->user()->isAdmin())
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+    console.log('📦 Inventory: Page loaded, setting up real-time sync...');
+    console.log('📦 Inventory: Current route:', '{{ \Illuminate\Support\Facades\Route::currentRouteName() }}');
+    
+    // Test if event listener is working
+    console.log('📦 Inventory: Event listener registered for sync:productUpdates');
+    
+    // Helper function to show notification
+    function showNotification(message, type = 'success') {
+        const alertDiv = document.createElement('div');
+        alertDiv.className = `alert alert-${type} alert-dismissible fade show position-fixed`;
+        alertDiv.style.cssText = 'top: 20px; right: 20px; z-index: 9999; min-width: 300px;';
+        alertDiv.innerHTML = `
+            ${message}
+            <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+        `;
+        document.body.appendChild(alertDiv);
+        setTimeout(() => {
+            alertDiv.remove();
+        }, 5000);
+    }
+    
+    // Helper function to update product quantity in tables
+    function updateProductQuantity(productId, quantity, reorderLevel, unit, productName) {
+        // Skip test products
+        if (productId === 999999 || productName === 'TEST-PRODUCT') {
+            console.log('📦 Inventory: Skipping test product');
+            return;
+        }
+        
+        const isLowStock = quantity <= reorderLevel;
+        
+        // Update staff products table
+        const staffRow = document.querySelector(`#staff-products-tbody tr[data-product-id="${productId}"]`);
+        if (staffRow) {
+            const quantityBadge = staffRow.querySelector('[data-product-quantity]');
+            const statusBadge = staffRow.querySelector('[data-product-status]');
+            
+            if (quantityBadge) {
+                quantityBadge.setAttribute('data-product-quantity', quantity);
+                quantityBadge.textContent = parseInt(quantity).toLocaleString();
+                quantityBadge.className = `badge bg-${isLowStock ? 'warning' : 'success'}`;
+            }
+            
+            if (statusBadge) {
+                statusBadge.textContent = isLowStock ? 'Low Stock' : 'In Stock';
+                statusBadge.className = `badge bg-${isLowStock ? 'warning' : 'success'}`;
+            }
+        }
+        
+        // Update balance products table
+        const balanceRow = document.querySelector(`#balance-products-tbody tr[data-product-id="${productId}"]`);
+        if (balanceRow) {
+            const currentStockBadge = balanceRow.querySelector('[data-product-current-stock]');
+            const balanceBadge = balanceRow.querySelector('[data-product-balance]');
+            const statusBadge = balanceRow.querySelector('[data-product-status]');
+            
+            if (currentStockBadge) {
+                currentStockBadge.setAttribute('data-product-current-stock', quantity);
+                currentStockBadge.textContent = parseInt(quantity).toLocaleString();
+            }
+            
+            if (balanceBadge) {
+                balanceBadge.setAttribute('data-product-balance', quantity);
+                balanceBadge.textContent = parseInt(quantity).toLocaleString();
+                balanceBadge.className = `badge bg-${isLowStock ? 'warning' : 'success'}`;
+            }
+            
+            if (statusBadge) {
+                statusBadge.textContent = isLowStock ? 'Low Stock' : 'In Stock';
+                statusBadge.className = `badge bg-${isLowStock ? 'warning' : 'success'}`;
+            }
+        }
+        
+        // Show notification for low stock
+        if (isLowStock) {
+            const alertDiv = document.createElement('div');
+            alertDiv.className = 'alert alert-warning alert-dismissible fade show';
+            alertDiv.innerHTML = `
+                <strong>Low Stock Alert!</strong> Product has ${quantity} ${unit || 'pcs'} remaining.
+                <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+            `;
+            const mainContent = document.querySelector('.container-fluid');
+            if (mainContent) {
+                mainContent.insertBefore(alertDiv, mainContent.firstChild);
+            }
+        }
+    }
+    
+    // Function to add/update product in inventory (same pattern as sales history)
+    function addProductToInventory(product) {
+        // Skip test products
+        if (product.id === 999999 || product.name === 'TEST-PRODUCT') {
+            console.log('📦 Inventory: Skipping test product');
+            return;
+        }
+        
+        console.log('📦 Inventory: Processing product update:', product.id, product.name, product);
+        
+        if (product.quantity !== undefined) {
+            updateProductQuantity(
+                product.id,
+                product.quantity,
+                product.reorder_level || 0,
+                product.unit || 'pcs',
+                product.name
+            );
+        }
+    }
+    
+    // Function to add new inventory movement to table
+    function addMovementToTable(movement) {
+        // Skip test movements
+        if (movement.id === 999999) {
+            console.log('📋 Inventory: Skipping test movement');
+            return;
+        }
+        
+        console.log('📋 Inventory: Processing movement:', movement.id, movement.product_name);
+        
+        const tbody = document.getElementById('movements-tbody');
+        if (!tbody) {
+            console.log('📋 Inventory: Movements table body not found');
+            return;
+        }
+        
+        // Check if movement already exists (prevent duplicates)
+        const existingRow = tbody.querySelector(`tr[data-movement-id="${movement.id}"]`);
+        if (existingRow) {
+            console.log('📋 Inventory: Movement already exists in table:', movement.id);
+            return;
+        }
+        
+        // Remove "no movements" row if it exists
+        const noMovementsRow = document.getElementById('no-movements-row');
+        if (noMovementsRow) {
+            noMovementsRow.remove();
+        }
+        
+        // Format date
+        const movementDate = new Date(movement.created_at);
+        const dateStr = movementDate.toLocaleDateString('en-US', { 
+            month: 'short', 
+            day: 'numeric', 
+            year: 'numeric',
+            hour: '2-digit',
+            minute: '2-digit',
+            second: '2-digit',
+            hour12: true
+        });
+        
+        // Create new row
+        const newRow = document.createElement('tr');
+        newRow.setAttribute('data-movement-id', movement.id);
+        newRow.setAttribute('data-product-id', movement.product_id);
+        
+        // Add highlight animation
+        newRow.style.backgroundColor = '#d4edda';
+        setTimeout(() => {
+            newRow.style.transition = 'background-color 2s';
+            newRow.style.backgroundColor = '';
+        }, 100);
+        
+        // Determine in/out values
+        const inValue = (movement.type === 'in' || movement.type === 'adjustment') 
+            ? parseInt(movement.quantity).toLocaleString() 
+            : '<span class="text-muted">—</span>';
+        const outValue = movement.type === 'out' 
+            ? parseInt(movement.quantity).toLocaleString() 
+            : '<span class="text-muted">—</span>';
+        
+        // Note: We don't have opening_balance and running_balance from sync
+        // For now, we'll use placeholders or fetch them
+        // The full balance calculation would require server-side computation
+        newRow.innerHTML = `
+            <td>${dateStr}</td>
+            <td>${movement.product_name || 'Unknown'}</td>
+            <td>—</td>
+            <td>${inValue}</td>
+            <td>${outValue}</td>
+            <td>—</td>
+            <td>${movement.reason || 'N/A'}</td>
+            <td>${movement.user_name || 'Unknown'}</td>
+        `;
+        
+        // Insert at the top (newest first)
+        tbody.insertBefore(newRow, tbody.firstChild);
+        
+        console.log('📋 Inventory: Added movement to table:', movement.id);
+    }
+    
+    // Listen for polling sync events (same pattern as sales history)
+    window.addEventListener('sync:productUpdates', function(event) {
+        console.log('📦 Inventory: sync:productUpdates event received!', event);
+        const products = event.detail || [];
+        if (!products.length) {
+            console.log('📦 Inventory: No products in event detail');
+            return;
+        }
+        
+        console.log('📦 Inventory: Received product updates via polling:', products.length, products);
+        
+        products.forEach(function(product) {
+            addProductToInventory(product);
+        });
+    });
+    
+    // Function to reload movements table (for accurate balance calculations)
+    function reloadMovementsTable() {
+        console.log('📋 Inventory: Reloading movements table...');
+        // Get current filter parameters
+        const urlParams = new URLSearchParams(window.location.search);
+        const productId = urlParams.get('product_id') || '';
+        const type = urlParams.get('type') || '';
+        const month = urlParams.get('month') || '';
+        const year = urlParams.get('year') || new Date().getFullYear();
+        
+        // Build URL with current filters
+        let reloadUrl = '{{ route("inventory.index") }}?';
+        if (productId) reloadUrl += 'product_id=' + productId + '&';
+        if (type) reloadUrl += 'type=' + type + '&';
+        if (month) reloadUrl += 'month=' + month + '&';
+        reloadUrl += 'year=' + year;
+        
+        // Fetch the page and extract movements table
+        fetch(reloadUrl, {
+            headers: {
+                'X-Requested-With': 'XMLHttpRequest',
+                'Accept': 'text/html'
+            }
+        })
+        .then(response => response.text())
+        .then(html => {
+            // Parse the HTML response
+            const parser = new DOMParser();
+            const doc = parser.parseFromString(html, 'text/html');
+            const newTbody = doc.querySelector('#movements-tbody');
+            
+            if (newTbody) {
+                const currentTbody = document.getElementById('movements-tbody');
+                if (currentTbody && currentTbody.parentNode) {
+                    // Replace the tbody content
+                    currentTbody.innerHTML = newTbody.innerHTML;
+                    console.log('📋 Inventory: Movements table reloaded');
+                    
+                    // Highlight new rows
+                    const rows = currentTbody.querySelectorAll('tr[data-movement-id]');
+                    if (rows.length > 0) {
+                        rows[0].style.backgroundColor = '#d4edda';
+                        setTimeout(() => {
+                            rows[0].style.transition = 'background-color 2s';
+                            rows[0].style.backgroundColor = '';
+                        }, 2000);
+                    }
+                }
+            }
+        })
+        .catch(err => {
+            console.error('📋 Inventory: Error reloading movements table:', err);
+            // Fallback: just add movements without balances
+            console.log('📋 Inventory: Falling back to simple movement addition');
+        });
+    }
+    
+    // Listen for inventory movements sync events
+    window.addEventListener('sync:inventoryMovements', function(event) {
+        console.log('📋 Inventory: sync:inventoryMovements event received!', event);
+        const movements = event.detail || [];
+        if (!movements.length) {
+            console.log('📋 Inventory: No movements in event detail');
+            return;
+        }
+        
+        console.log('📋 Inventory: Received inventory movements via polling:', movements.length, movements);
+        
+        // Reload the table to get accurate balances
+        // This ensures opening_balance and running_balance are correct
+        reloadMovementsTable();
+    });
+    
+    // Real-time updates with Laravel Echo (WebSocket)
+    if (typeof Echo !== 'undefined') {
+        console.log('✓ Inventory: Setting up WebSocket listeners...');
+        
+        // Listen for product updates
+        Echo.channel('products')
+            .listen('.product.updated', function(e) {
+                console.log('✓ Inventory: Product updated via WebSocket:', e.product);
+                
+                // Convert WebSocket event data to match polling format
+                const product = {
+                    id: e.product.id || e.product.product_id,
+                    name: e.product.name || e.product.product_name,
+                    quantity: e.product.quantity,
+                    reorder_level: e.product.reorder_level || 0,
+                    unit: e.product.unit || 'pcs'
+                };
+                
+                // Use the same function as polling
+                addProductToInventory(product);
+            });
+        
+        // Listen for inventory updates
+        Echo.channel('inventory')
+            .listen('.inventory.updated', function(e) {
+                console.log('✓ Inventory: Inventory updated via WebSocket:', e.product);
+                
+                // Convert WebSocket event data to match polling format
+                const product = {
+                    id: e.product.product_id || e.product.id,
+                    name: e.product.product_name || e.product.name,
+                    quantity: e.product.quantity,
+                    reorder_level: e.product.reorder_level || 0,
+                    unit: e.product.unit || 'pcs'
+                };
+                
+                // Use the same function as polling
+                addProductToInventory(product);
+            });
+    } else {
+        console.warn('⚠️ Inventory: Laravel Echo not available. Using polling fallback only.');
+    }
+});
+</script>
+@endif
 @endif
 @endsection
  

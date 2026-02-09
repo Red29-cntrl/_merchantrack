@@ -31,6 +31,12 @@ Route::middleware('auth')->group(function () {
         return view('debug-sync');
     })->name('debug.sync');
     
+    // Simple sync test page
+    Route::get('/test-sync', function () {
+        return response()->view('test-sync', [], 200)
+            ->header('Content-Type', 'text/html');
+    })->name('test.sync');
+    
     // Shared routes (both staff and admin can view)
     Route::get('/products', [ProductController::class, 'index'])->name('products.index');
     // Note: create/edit routes must be defined before {product} route to avoid route conflicts
