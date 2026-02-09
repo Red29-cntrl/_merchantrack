@@ -303,7 +303,7 @@
     <div class="main-content">
         @auth
         <nav class="navbar navbar-expand-lg navbar-custom">
-            <div class="container-fluid">
+            <div class="container-fluid d-flex justify-content-between align-items-center">
                 <span class="navbar-text">
                     Welcome, <strong>{{ auth()->user()->name }}</strong> 
                     <span class="badge bg-dark ms-2">{{ ucfirst(auth()->user()->role) }}</span>
@@ -345,6 +345,122 @@
     <!-- jQuery -->
     <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
     
+    <!-- Laravel Echo & Pusher for Real-Time Updates -->
+    <script src="{{ mix('js/app.js') }}" id="echo-script"></script>
+    @auth
+    <!-- Auto-sync when data changes on another device (no manual refresh needed) -->
+    <script>
+    (function() {
+        // Store user role in JavaScript for reliable access
+        const CURRENT_USER_ROLE = '{{ auth()->user()->role }}';
+        console.log('Current user role:', CURRENT_USER_ROLE);
+        let lastSyncTime = new Date().toISOString();
+        let syncInterval = null;
+        let websocketConnected = false;
+        
+        // Fallback polling sync (works even without WebSocket)
+        function startPollingSync() {
+            if (syncInterval) return; // Already started
+            
+            console.log('🔄 Starting polling sync (fallback mode)...');
+            syncInterval = setInterval(function() {
+                fetch('{{ route("sync.changes") }}?last_sync=' + encodeURIComponent(lastSyncTime))
+                    .then(response => response.json())
+                    .then(data => {
+                        if (data.sales && data.sales.length > 0) {
+                            console.log('📊 New sales detected:', data.sales.length);
+                            // Trigger custom event for pages to handle
+                            window.dispatchEvent(new CustomEvent('sync:newSales', { detail: data.sales }));
+                        }
+                        if (data.products && data.products.length > 0) {
+                            console.log('📦 Product updates detected:', data.products.length);
+                            // Trigger custom event for pages to handle
+                            window.dispatchEvent(new CustomEvent('sync:productUpdates', { detail: data.products }));
+                        }
+                        if (data.timestamp) {
+                            lastSyncTime = data.timestamp;
+                        }
+                    })
+                    .catch(err => {
+                        console.warn('Sync polling error:', err);
+                    });
+            }, 3000); // Check every 3 seconds
+        }
+        
+        function setupSync() {
+            if (typeof window.Echo === 'undefined') {
+                console.warn('⚠️ Laravel Echo is not available. Using polling fallback.');
+                console.warn('   → For WebSocket support: npm run production');
+                startPollingSync();
+                return false;
+            }
+            try {
+                // Check connection status
+                const pusher = window.Echo.connector.pusher;
+                const connection = pusher.connection;
+                
+                console.log('✓ Laravel Echo is available');
+                console.log('  Connection state:', connection.state);
+                console.log('  WebSocket host:', pusher.config.wsHost);
+                console.log('  WebSocket port:', pusher.config.wsPort);
+                
+                // Monitor connection
+                connection.bind('state_change', function(states) {
+                    console.log('WebSocket state changed:', states.previous, '→', states.current);
+                    if (states.current === 'connected') {
+                        console.log('✓ WebSocket connected successfully!');
+                        websocketConnected = true;
+                        if (syncInterval) {
+                            clearInterval(syncInterval);
+                            syncInterval = null;
+                            console.log('✓ Switched to WebSocket mode (polling disabled)');
+                        }
+                    } else if (states.current === 'failed' || states.current === 'disconnected') {
+                        console.warn('⚠️ WebSocket disconnected. Falling back to polling...');
+                        websocketConnected = false;
+                        if (!syncInterval) {
+                            startPollingSync();
+                        }
+                    }
+                });
+                
+                connection.bind('error', function(err) {
+                    console.error('✗ WebSocket error:', err);
+                    if (!syncInterval) {
+                        startPollingSync();
+                    }
+                });
+                
+                // If not connected after 5 seconds, start polling
+                setTimeout(function() {
+                    if (!websocketConnected && !syncInterval) {
+                        console.warn('⚠️ WebSocket not connected after 5s. Starting polling fallback...');
+                        startPollingSync();
+                    }
+                }, 5000);
+                
+                return true;
+            } catch (e) {
+                console.error('✗ Real-time sync setup failed:', e);
+                startPollingSync();
+                return false;
+            }
+        }
+        
+        function trySetup(attempt) {
+            if (setupSync()) return;
+            if (attempt < 25) setTimeout(function() { trySetup(attempt + 1); }, 200);
+        }
+        
+        if (document.readyState === 'loading') {
+            document.addEventListener('DOMContentLoaded', function() { trySetup(0); });
+        } else {
+            trySetup(0);
+        }
+    })();
+    </script>
+    
+    @endauth
     <!-- Disable Service Worker / Offline caching to prevent 419 issues -->
     <script>
         if ('serviceWorker' in navigator) {
@@ -353,6 +469,62 @@
             });
         }
     </script>
+    
+    @auth
+    <!-- Prevent browser back/forward button navigation (ONLY browser <- and -> buttons, not keyboard shortcuts) -->
+    <script>
+    (function() {
+        'use strict';
+        
+        // Push initial state to history stack
+        history.pushState(null, null, location.href);
+        history.pushState(null, null, location.href);
+        
+        // Function to maintain current position in history
+        function maintainCurrentPosition() {
+            try {
+                // Replace current state and push new one to lock position
+                history.replaceState(null, null, location.href);
+                history.pushState(null, null, location.href);
+            } catch(e) {
+                console.error('History maintenance error:', e);
+            }
+        }
+        
+        // CRITICAL: This is the ONLY way to detect browser back/forward button clicks
+        // The popstate event fires when user clicks browser <- or -> buttons
+        window.addEventListener('popstate', function(event) {
+            // Immediately push state back to prevent navigation
+            history.pushState(null, null, location.href);
+            console.log('Browser back/forward button navigation prevented');
+        }, true); // Use capture phase for immediate interception
+        
+        // Backup handler
+        window.onpopstate = function(event) {
+            history.pushState(null, null, location.href);
+        };
+        
+        // Continuously maintain history state to prevent navigation
+        // This ensures the history stack always has the current page
+        setInterval(function() {
+            maintainCurrentPosition();
+        }, 100); // Check every 100ms
+        
+        // Maintain state on page load
+        if (document.readyState === 'complete') {
+            maintainCurrentPosition();
+        } else {
+            window.addEventListener('load', function() {
+                maintainCurrentPosition();
+            });
+        }
+        
+        // Initial state setup
+        setTimeout(maintainCurrentPosition, 50);
+        
+    })();
+    </script>
+    @endauth
     
     @yield('scripts')
 </body>

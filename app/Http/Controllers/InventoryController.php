@@ -5,6 +5,7 @@ namespace App\Http\Controllers;
 use App\Product;
 use App\InventoryMovement;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Gate;
 use Carbon\Carbon;
 
 class InventoryController extends Controller
@@ -15,21 +16,19 @@ class InventoryController extends Controller
     }
 
     /**
-     * Check if user has permission to modify inventory
+     * Check if user has permission to modify inventory (admin only).
      */
     private function checkModifyPermission()
     {
-        if (!auth()->user()->isAdmin()) {
-            abort(403, 'Unauthorized action. Only admins can modify inventory.');
-        }
+        Gate::authorize('manage_inventory');
     }
 
     public function index(Request $request)
     {
         $products = Product::with('category')->get();
 
-        if ($request->type === 'balance' && !auth()->user()->isAdmin()) {
-            abort(403, 'Unauthorized action. Only admins can view balance.');
+        if ($request->type === 'balance') {
+            Gate::authorize('manage_inventory');
         }
 
         $showBalance = $request->type === 'balance';
@@ -308,6 +307,18 @@ class InventoryController extends Controller
         ]);
 
         $product->increment('quantity', $quantity);
+
+        // Refresh product to get updated quantity
+        $product->refresh();
+        
+        // Auto-refresh syncing uses the shared DB; broadcasting is optional and must never break core flows.
+        if (config('broadcasting.default') !== 'null') {
+            try {
+                event(new \App\Events\InventoryUpdated($product, $request->type, auth()->user()->role, auth()->user()->name));
+            } catch (\Throwable $e) {
+                \Log::warning('Failed to broadcast InventoryUpdated event: ' . $e->getMessage());
+            }
+        }
 
         return redirect()->back()->with('success', 'Inventory adjusted successfully.');
     }

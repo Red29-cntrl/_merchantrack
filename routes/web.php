@@ -26,6 +26,11 @@ Route::get('/', function () {
 Route::middleware('auth')->group(function () {
     Route::get('/dashboard', [DashboardController::class, 'index'])->name('dashboard');
     
+    // Debug route for sync testing
+    Route::get('/debug-sync', function () {
+        return view('debug-sync');
+    })->name('debug.sync');
+    
     // Shared routes (both staff and admin can view)
     Route::get('/products', [ProductController::class, 'index'])->name('products.index');
     // Note: create/edit routes must be defined before {product} route to avoid route conflicts
@@ -33,6 +38,9 @@ Route::middleware('auth')->group(function () {
     // Note: create/edit routes must be defined before {category} route to avoid route conflicts
     
     Route::get('/inventory', [InventoryController::class, 'index'])->name('inventory.index');
+    
+    // Sync endpoint (fallback when WebSocket not available)
+    Route::get('/api/sync/changes', [\App\Http\Controllers\SyncController::class, 'getLatestChanges'])->name('sync.changes');
     
     // Staff-only Routes
     Route::middleware('staff')->group(function () {

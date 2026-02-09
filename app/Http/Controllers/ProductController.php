@@ -6,6 +6,7 @@ use App\Product;
 use App\Category;
 use App\InventoryMovement;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Gate;
 
 class ProductController extends Controller
 {
@@ -15,13 +16,11 @@ class ProductController extends Controller
     }
 
     /**
-     * Check if user has permission to modify products
+     * Check if user has permission to modify products (admin only).
      */
     private function checkModifyPermission()
     {
-        if (!auth()->user()->isAdmin()) {
-            abort(403, 'Unauthorized action. Only admins can modify products.');
-        }
+        Gate::authorize('manage_products');
     }
 
     public function index(Request $request)
@@ -71,7 +70,16 @@ class ProductController extends Controller
             'unit' => 'required|string|max:50',
         ]);
 
-        Product::create($data);
+        $product = Product::create($data);
+        // Auto-refresh syncing uses the shared DB; broadcasting is optional and must never break core flows.
+        if (config('broadcasting.default') !== 'null') {
+            try {
+                event(new \App\Events\ProductUpdated($product, 'created', auth()->user()->role, auth()->user()->name));
+            } catch (\Throwable $e) {
+                \Log::warning('Failed to broadcast ProductUpdated event: ' . $e->getMessage());
+            }
+        }
+        
         return redirect()->route('products.index')->with('success', 'Product created successfully.');
     }
 
@@ -103,10 +111,21 @@ class ProductController extends Controller
             'unit' => 'required|string|max:50',
         ]);
 
-        // Capture old quantity before update so we can log inventory movement
+        // Capture old values to detect changes
         $oldQuantity = $product->quantity;
+        $oldName = $product->name;
+        $oldPrice = $product->price;
+        $oldDescription = $product->description;
+        $oldSku = $product->sku;
 
         $product->update($data);
+        $product->refresh();
+
+        // Check if name, price, description, or SKU changed
+        $productChanged = ($oldName !== $product->name) || 
+                         ($oldPrice != $product->price) || 
+                         ($oldDescription !== $product->description) || 
+                         ($oldSku !== $product->sku);
 
         // Log inventory movement if quantity changed via product edit
         $newQuantity = $product->quantity;
@@ -120,6 +139,25 @@ class ProductController extends Controller
                 'quantity' => abs($diff),
                 'reason' => 'Product quantity edited',
             ]);
+            
+            // Broadcasting is optional; must never break core flows.
+            if (config('broadcasting.default') !== 'null') {
+                try {
+                    event(new \App\Events\InventoryUpdated($product, 'edit', auth()->user()->role, auth()->user()->name));
+                } catch (\Throwable $e) {
+                    \Log::warning('Failed to broadcast InventoryUpdated event: ' . $e->getMessage());
+                }
+            }
+        }
+        
+        // Broadcast product update if product details changed (name, price, description, SKU, or quantity)
+        // This ensures staff are notified of any product changes
+        if ($productChanged && config('broadcasting.default') !== 'null') {
+            try {
+                event(new \App\Events\ProductUpdated($product, 'updated', auth()->user()->role, auth()->user()->name));
+            } catch (\Throwable $e) {
+                \Log::warning('Failed to broadcast ProductUpdated event: ' . $e->getMessage());
+            }
         }
 
         return redirect()->route('products.index')->with('success', 'Product updated successfully.');
@@ -128,6 +166,16 @@ class ProductController extends Controller
     public function destroy(Product $product)
     {
         $this->checkModifyPermission();
+        
+        // Broadcast before deletion (optional)
+        if (config('broadcasting.default') !== 'null') {
+            try {
+                event(new \App\Events\ProductUpdated($product, 'deleted', auth()->user()->role, auth()->user()->name));
+            } catch (\Throwable $e) {
+                \Log::warning('Failed to broadcast ProductUpdated event: ' . $e->getMessage());
+            }
+        }
+        
         $product->delete();
         return redirect()->route('products.index')->with('success', 'Product deleted successfully.');
     }

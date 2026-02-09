@@ -35,9 +35,11 @@
         <div class="col-md-4">
             <div class="card">
                 <div class="card-body">
+                    @can('manage_products')
                     <a href="{{ route('products.edit', $product) }}" class="btn btn-warning w-100 mb-2">
                         <i class="fas fa-edit me-2"></i>Edit Product
                     </a>
+                    @endcan
                     <a href="{{ route('products.index') }}" class="btn btn-secondary w-100">
                         <i class="fas fa-arrow-left me-2"></i>Back to Products
                     </a>

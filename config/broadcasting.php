@@ -32,12 +32,16 @@ return [
 
         'pusher' => [
             'driver' => 'pusher',
-            'key' => env('PUSHER_APP_KEY'),
-            'secret' => env('PUSHER_APP_SECRET'),
-            'app_id' => env('PUSHER_APP_ID'),
+            'key' => env('PUSHER_APP_KEY', 'merchantrack-key'),
+            'secret' => env('PUSHER_APP_SECRET', 'merchantrack-secret'),
+            'app_id' => env('PUSHER_APP_ID', 'merchantrack'),
             'options' => [
-                'cluster' => env('PUSHER_APP_CLUSTER'),
-                'useTLS' => true,
+                'cluster' => env('PUSHER_APP_CLUSTER', 'mt1'),
+                'encrypted' => false,
+                'host' => env('WEBSOCKET_HOST', '127.0.0.1'),
+                'port' => (int) env('WEBSOCKET_PORT', 6001),
+                'scheme' => 'http',
+                'useTLS' => false,
             ],
         ],
 

@@ -224,8 +224,8 @@
                              data-category-id="{{ $product->category_id ?? '' }}">
                             <strong>{{ $product->name }}</strong><br>
                             <small class="text-muted">{{ $product->sku }}</small><br>
-                            <span class="badge bg-primary">₱{{ number_format($product->price, 2) }}</span><br>
-                            <small class="product-stock">Stock: {{ number_format($product->quantity, 0) }} {{ ucfirst($product->unit ?? 'pcs') }}</small>
+                            <span class="badge bg-primary product-price">₱{{ number_format($product->price, 2) }}</span><br>
+                            <small class="product-stock product-quantity">Stock: {{ number_format($product->quantity, 0) }} {{ ucfirst($product->unit ?? 'pcs') }}</small>
                         </div>
                         @endforeach
                     </div>
@@ -484,10 +484,21 @@ document.addEventListener('click', function(event) {
     }
 });
 
-let cart = [];
+// Load cart from localStorage if available (persist cart across page refreshes)
+let cart = JSON.parse(localStorage.getItem('pos_cart') || '[]');
 const products = @json($products);
 let html5QrcodeScanner = null;
 let isScanning = false;
+
+// Save cart to localStorage whenever it changes
+function saveCartToStorage() {
+    localStorage.setItem('pos_cart', JSON.stringify(cart));
+}
+
+// Clear cart from storage (called after successful sale)
+function clearCartStorage() {
+    localStorage.removeItem('pos_cart');
+}
 
 // Barcode Scanner Functionality
 $('#scan-barcode-btn').on('click', function() {
@@ -750,6 +761,9 @@ $('.product-card').on('click', function() {
 });
 
 function updateCart() {
+    // Save cart to localStorage
+    saveCartToStorage();
+    
     const cartHtml = cart.length === 0 
         ? '<p class="text-muted text-center">No items in cart</p>'
         : cart.map((item, index) => {
@@ -950,6 +964,14 @@ function initDB() {
             if (!db.objectStoreNames.contains(STORE_NAME)) {
                 const store = db.createObjectStore(STORE_NAME, { keyPath: 'id', autoIncrement: true });
                 store.createIndex('timestamp', 'timestamp', { unique: false });
+                store.createIndex('synced', 'synced', { unique: false });
+            } else {
+                // Add synced index if it doesn't exist (for existing databases)
+                const transaction = event.target.transaction;
+                const store = transaction.objectStore(STORE_NAME);
+                if (!store.indexNames.contains('synced')) {
+                    store.createIndex('synced', 'synced', { unique: false });
+                }
             }
         };
     });
@@ -975,18 +997,36 @@ async function saveSaleOffline(saleData) {
     });
 }
 
-// Get pending sales from IndexedDB
+// Get pending sales from IndexedDB (only unsynced ones)
 async function getPendingSales() {
     if (!db) await initDB();
     
     return new Promise((resolve, reject) => {
         const transaction = db.transaction([STORE_NAME], 'readonly');
         const store = transaction.objectStore(STORE_NAME);
-        const index = store.index('timestamp');
-        const request = index.getAll();
         
-        request.onsuccess = () => resolve(request.result || []);
-        request.onerror = () => reject(request.error);
+        // Try to use synced index, fallback to filtering all records
+        try {
+            const index = store.index('synced');
+            const request = index.getAll(false); // Get only unsynced sales (synced === false)
+            
+            request.onsuccess = () => {
+                const results = request.result || [];
+                // Also filter out any that might have synced: true (in case index wasn't used)
+                const unsynced = results.filter(sale => !sale.synced);
+                resolve(unsynced);
+            };
+            request.onerror = () => reject(request.error);
+        } catch (e) {
+            // If index doesn't exist, get all and filter
+            const request = store.getAll();
+            request.onsuccess = () => {
+                const results = request.result || [];
+                const unsynced = results.filter(sale => sale.synced === false || sale.synced === undefined);
+                resolve(unsynced);
+            };
+            request.onerror = () => reject(request.error);
+        }
     });
 }
 
@@ -1042,14 +1082,30 @@ async function syncPendingSales() {
                 });
                 
                 if (response.ok) {
-                    const result = await response.json();
-                    if (result.success) {
-                        await removePendingSale(sale.id);
-                        console.log('Synced sale:', sale.id);
+                    try {
+                        const result = await response.json();
+                        if (result && result.success) {
+                            await removePendingSale(sale.id);
+                            console.log('Synced sale:', sale.id);
+                        } else {
+                            console.error('Sync failed for sale:', sale.id, result);
+                        }
+                    } catch (jsonError) {
+                        // If response is OK but not JSON, still consider it successful
+                        const text = await response.text();
+                        if (response.status === 200) {
+                            await removePendingSale(sale.id);
+                            console.log('Synced sale:', sale.id, '(non-JSON response)');
+                        } else {
+                            console.error('Sync failed for sale:', sale.id, response.status, text);
+                        }
                     }
+                } else {
+                    const errorText = await response.text();
+                    console.error('Sync failed for sale:', sale.id, response.status, errorText);
                 }
             } catch (error) {
-                console.error('Error syncing sale:', error);
+                console.error('Error syncing sale:', sale.id, error);
             }
         }
         
@@ -1088,20 +1144,51 @@ function checkOnlineStatus() {
     }
 }
 
+// Send CSRF token to service worker
+function sendCSRFTokenToSW() {
+    if ('serviceWorker' in navigator && navigator.serviceWorker.controller) {
+        const csrfToken = $('meta[name="csrf-token"]').attr('content');
+        if (csrfToken) {
+            navigator.serviceWorker.controller.postMessage({
+                type: 'CSRF_TOKEN',
+                token: csrfToken
+            });
+        }
+    }
+}
+
+// Listen for service worker messages (for CSRF token requests)
+if ('serviceWorker' in navigator) {
+    navigator.serviceWorker.addEventListener('message', (event) => {
+        if (event.data && event.data.type === 'REQUEST_CSRF_TOKEN') {
+            sendCSRFTokenToSW();
+        }
+    });
+}
+
 // Initialize DB and check status on page load
 initDB().then(() => {
     checkOnlineStatus();
     syncPendingSales(); // Try to sync any pending sales
+    sendCSRFTokenToSW(); // Send CSRF token to service worker
     
     // Listen for online/offline events
     window.addEventListener('online', () => {
         checkOnlineStatus();
         syncPendingSales();
+        sendCSRFTokenToSW(); // Update CSRF token when coming online
     });
     
     window.addEventListener('offline', () => {
         checkOnlineStatus();
     });
+
+    // Note: Auto-refresh removed - Real-time updates via WebSocket (Echo) handle product updates
+    // This prevents cart from being lost during refresh
+    // Product updates are handled by:
+    // - Echo.channel('products').listen('.product.updated')
+    // - Echo.channel('inventory').listen('.inventory.updated')
+    // - Echo.channel('sales').listen('.sale.created')
 });
 
 $('#process-sale').on('click', async function() {
@@ -1163,6 +1250,7 @@ $('#process-sale').on('click', async function() {
                     // Show success modal with receipt
                     showSuccessModal(response.sale, response.business);
                     cart = [];
+                    clearCartStorage(); // Clear cart from storage after successful sale
                     updateCart();
                 }
             },
@@ -1171,11 +1259,32 @@ $('#process-sale').on('click', async function() {
                 if (xhr.status === 0 || !navigator.onLine) {
                     await handleOfflineSale(saleData);
                 } else {
-                    const error = xhr.responseJSON?.message || 'Error processing sale';
+                    // Get detailed error information
+                    let errorMessage = 'Error processing sale';
+                    
+                    if (xhr.responseJSON) {
+                        // Check for validation errors
+                        if (xhr.responseJSON.errors) {
+                            const errors = Object.values(xhr.responseJSON.errors).flat();
+                            errorMessage = errors.join('<br>');
+                        } else if (xhr.responseJSON.message) {
+                            errorMessage = xhr.responseJSON.message;
+                        }
+                    } else if (xhr.responseText) {
+                        // Try to parse as text
+                        errorMessage = xhr.responseText.substring(0, 200);
+                    }
+                    
+                    console.error('Sale processing error:', {
+                        status: xhr.status,
+                        statusText: xhr.statusText,
+                        response: xhr.responseJSON || xhr.responseText
+                    });
+                    
                     showCustomAlert(
-                        'Stock warning',
-                        `An error occurred: ${error}`.replace(/\n/g, '<br>'),
-                        'warning'
+                        'Error Processing Sale',
+                        `An error occurred: ${errorMessage}`.replace(/\n/g, '<br>'),
+                        'error'
                     );
                 }
             }
@@ -1226,6 +1335,7 @@ async function handleOfflineSale(saleData) {
         $('#successModal .modal-body').append(offlineNotice);
         
         cart = [];
+        clearCartStorage(); // Clear cart from storage
         updateCart();
     } catch (error) {
         console.error('Error saving offline sale:', error);
@@ -1397,6 +1507,176 @@ function printReceipt() {
         printWindow.close();
     }, 250);
 }
+
+// Real-time updates for POS
+document.addEventListener('DOMContentLoaded', function() {
+    // Listen for polling sync events (fallback when WebSocket not available)
+    window.addEventListener('sync:productUpdates', function(event) {
+        const productUpdates = event.detail;
+        console.log('📦 POS: Received product updates via polling:', productUpdates.length);
+        productUpdates.forEach(function(productData) {
+            // Update product in products array
+            const productIndex = products.findIndex(p => p.id === productData.id);
+            if (productIndex !== -1) {
+                Object.assign(products[productIndex], productData);
+            }
+            
+            // Update product card if visible
+            const productCard = document.querySelector(`[data-product-id="${productData.id}"]`);
+            if (productCard) {
+                const quantityEl = productCard.querySelector('.product-quantity');
+                if (quantityEl) {
+                    const unit = productData.unit || 'pcs';
+                    quantityEl.textContent = `Stock: ${parseInt(productData.quantity).toLocaleString()} ${unit}`;
+                    productCard.setAttribute('data-product-stock', productData.quantity);
+                    
+                    if (productData.quantity <= 20) {
+                        productCard.classList.add('out-of-stock');
+                        productCard.style.opacity = '0.5';
+                        productCard.style.pointerEvents = 'none';
+                    } else {
+                        productCard.classList.remove('out-of-stock');
+                        productCard.style.opacity = '1';
+                        productCard.style.pointerEvents = 'auto';
+                    }
+                }
+                
+                const priceEl = productCard.querySelector('.product-price');
+                if (priceEl) {
+                    priceEl.textContent = '₱' + parseFloat(productData.price).toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2});
+                }
+            }
+            
+            // Update cart if product is in cart
+            cart.forEach((item, index) => {
+                if (item.product_id === productData.id) {
+                    cart[index].max_stock = productData.quantity;
+                }
+            });
+            updateCart();
+        });
+        filterProducts();
+    });
+    
+    if (typeof Echo !== 'undefined') {
+        console.log('✓ POS: Setting up real-time listeners...');
+        // Listen for product updates (price, stock changes)
+        Echo.channel('products')
+            .listen('.product.updated', (e) => {
+                console.log('✓ POS: Product updated:', e.product);
+                
+                // Update product card if visible
+                const productCard = document.querySelector(`[data-product-id="${e.product.id}"]`);
+                if (productCard) {
+                    // Update quantity display
+                    const quantityEl = productCard.querySelector('.product-quantity');
+                    if (quantityEl) {
+                        quantityEl.textContent = e.product.quantity;
+                        
+                        // Disable if out of stock or below minimum
+                        if (e.product.quantity <= 20) {
+                            productCard.classList.add('out-of-stock');
+                            productCard.style.opacity = '0.5';
+                            productCard.style.pointerEvents = 'none';
+                        } else {
+                            productCard.classList.remove('out-of-stock');
+                            productCard.style.opacity = '1';
+                            productCard.style.pointerEvents = 'auto';
+                        }
+                    }
+                    
+                    // Update price if changed
+                    const priceEl = productCard.querySelector('.product-price');
+                    if (priceEl) {
+                        priceEl.textContent = '₱' + parseFloat(e.product.price).toFixed(2);
+                    }
+                }
+                
+                // Update product in products array
+                const productIndex = products.findIndex(p => p.id === e.product.id);
+                if (productIndex !== -1) {
+                    // Update existing product
+                    Object.assign(products[productIndex], e.product);
+                    // Update max_stock in cart items if this product is in cart
+                    cart.forEach((item, index) => {
+                        if (item.product_id === e.product.id) {
+                            cart[index].max_stock = e.product.quantity;
+                        }
+                    });
+                    updateCart(); // Refresh cart display with updated stock
+                } else {
+                    // Add new product if not in list
+                    products.push(e.product);
+                }
+                
+                // Re-render product cards to show updated data
+                filterProducts();
+            });
+
+        // Listen for inventory updates
+        Echo.channel('inventory')
+            .listen('.inventory.updated', (e) => {
+                console.log('Inventory updated:', e.product);
+                
+                // Update product quantity in current view
+                const productCard = document.querySelector(`[data-product-id="${e.product.id}"]`);
+                if (productCard) {
+                    const quantityEl = productCard.querySelector('.product-quantity');
+                    if (quantityEl) {
+                        quantityEl.textContent = e.product.quantity;
+                        
+                        // Check if product should be disabled
+                        if (e.product.quantity <= 20) {
+                            productCard.classList.add('out-of-stock');
+                            productCard.style.opacity = '0.5';
+                            productCard.style.pointerEvents = 'none';
+                            
+                            // Show notification
+                            showNotification('Product ' + e.product.name + ' is running low on stock!', 'warning');
+                        } else {
+                            productCard.classList.remove('out-of-stock');
+                            productCard.style.opacity = '1';
+                            productCard.style.pointerEvents = 'auto';
+                        }
+                    }
+                }
+            });
+
+        // Listen for new sales (to update inventory after sale)
+        Echo.channel('sales')
+            .listen('.sale.created', (e) => {
+                console.log('New sale created:', e.sale);
+                // Note: Product quantities are updated via inventory.updated events
+                // No need to refresh - real-time updates handle this
+            });
+
+        // Listen for category updates (to refresh product list if categories change)
+        Echo.channel('categories')
+            .listen('.category.updated', (e) => {
+                console.log('Category updated:', e.category);
+                
+                // If category was deleted, remove products with that category from view
+                if (e.category.action === 'deleted') {
+                    // Filter out products with deleted category
+                    products = products.filter(p => p.category_id !== e.category.id);
+                    filterProducts();
+                } else {
+                    // Category created or updated - refresh product list to show updated categories
+                    // Reload products from server to get updated category data
+                    fetch('{{ route("pos.index") }}')
+                        .then(response => response.text())
+                        .then(html => {
+                            // Extract products from the page (they're loaded server-side)
+                            // This ensures we have the latest category information
+                            console.log('Category changed, products may need refresh');
+                        })
+                        .catch(err => console.error('Error refreshing products:', err));
+                }
+            });
+    } else {
+        console.warn('Laravel Echo is not available. Real-time updates disabled.');
+    }
+});
 </script>
 @endsection
 

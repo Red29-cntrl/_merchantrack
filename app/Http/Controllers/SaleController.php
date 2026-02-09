@@ -5,13 +5,17 @@ namespace App\Http\Controllers;
 use App\Sale;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Gate;
 
 class SaleController extends Controller
 {
     public function __construct()
     {
         $this->middleware('auth');
-        $this->middleware('admin');
+        $this->middleware(function ($request, $next) {
+            Gate::authorize('view_sales');
+            return $next($request);
+        });
     }
 
     public function index(Request $request)

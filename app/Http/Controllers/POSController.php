@@ -8,8 +8,11 @@ use App\SaleItem;
 use App\Category;
 use App\InventoryMovement;
 use App\BusinessSetting;
+use App\Events\SaleCreated;
+use App\Events\InventoryUpdated;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Gate;
 
 class POSController extends Controller
 {
@@ -22,6 +25,10 @@ class POSController extends Controller
     public function __construct()
     {
         $this->middleware('auth');
+        $this->middleware(function ($request, $next) {
+            Gate::authorize('use_pos');
+            return $next($request);
+        });
     }
 
     public function index()
@@ -145,6 +152,27 @@ class POSController extends Controller
             
             // Load sale with items and user for receipt
             $sale->load('items.product', 'user');
+            
+            // Auto-refresh syncing uses the shared DB; broadcasting is optional and must never break core flows.
+            if (config('broadcasting.default') !== 'null') {
+                try {
+                    event(new SaleCreated($sale, auth()->user()->role, auth()->user()->name));
+                } catch (\Throwable $e) {
+                    \Log::warning('Failed to broadcast SaleCreated event: ' . $e->getMessage());
+                }
+                
+                foreach ($request->items as $item) {
+                    $product = Product::find($item['product_id']);
+                    if ($product) {
+                        try {
+                            event(new InventoryUpdated($product, 'sale', auth()->user()->role, auth()->user()->name));
+                        } catch (\Throwable $e) {
+                            \Log::warning('Failed to broadcast InventoryUpdated event: ' . $e->getMessage());
+                        }
+                    }
+                }
+            }
+            
             $businessSettings = BusinessSetting::getSettings();
             
             // Format date - use sale_date if available, otherwise created_at
@@ -152,47 +180,80 @@ class POSController extends Controller
                 ? \Carbon\Carbon::parse($sale->sale_date)->setTimezone('Asia/Manila')
                 : $sale->created_at->setTimezone('Asia/Manila');
             
-            return response()->json([
+            // Convert items collection to array with null safety
+            $itemsArray = [];
+            foreach ($sale->items as $item) {
+                // Handle case where product might be deleted
+                if (!$item->product) {
+                    $itemsArray[] = [
+                        'product_name' => 'Deleted Product',
+                        'quantity' => (int) $item->quantity,
+                        'unit' => $item->unit ?? 'pcs',
+                        'unit_price' => (float) $item->unit_price,
+                        'subtotal' => (float) $item->subtotal,
+                    ];
+                } else {
+                    $itemsArray[] = [
+                        'product_name' => $item->product->name ?? 'Unknown Product',
+                        'quantity' => (int) $item->quantity,
+                        'unit' => $item->unit ?? ($item->product->unit ?? 'pcs'),
+                        'unit_price' => (float) $item->unit_price,
+                        'subtotal' => (float) $item->subtotal,
+                    ];
+                }
+            }
+            
+            // Build response data as plain arrays (no objects)
+            $responseData = [
                 'success' => true,
-                'sale_id' => $sale->id,
-                'sale_number' => $sale->sale_number,
+                'sale_id' => (int) $sale->id,
+                'sale_number' => (string) $sale->sale_number,
                 'message' => 'Sale processed successfully',
                 'sale' => [
-                    'sale_number' => $sale->sale_number,
-                    'date' => $saleDate->format('M d, Y h:i:s A'),
-                    'date_short' => $saleDate->format('M d, Y'),
-                    'cashier' => $sale->user->name,
-                    'payment_method' => $sale->payment_method,
-                    'items' => $sale->items->map(function($item) {
-                        return [
-                            'product_name' => $item->product->name,
-                            'quantity' => $item->quantity,
-                            'unit' => $item->unit ?? $item->product->unit ?? 'pcs',
-                            'unit_price' => $item->unit_price,
-                            'subtotal' => $item->subtotal,
-                        ];
-                    }),
-                    'subtotal' => $sale->subtotal,
-                    'tax' => $sale->tax,
-                    'discount' => $sale->discount,
-                    'total' => $sale->total,
+                    'sale_number' => (string) $sale->sale_number,
+                    'date' => (string) $saleDate->format('M d, Y h:i:s A'),
+                    'date_short' => (string) $saleDate->format('M d, Y'),
+                    'cashier' => (string) ($sale->user->name ?? 'Unknown'),
+                    'payment_method' => (string) $sale->payment_method,
+                    'items' => $itemsArray,
+                    'subtotal' => (float) $sale->subtotal,
+                    'tax' => (float) $sale->tax,
+                    'discount' => (float) $sale->discount,
+                    'total' => (float) $sale->total,
                 ],
                 'business' => [
-                    'business_name' => $businessSettings->business_name ?? '',
-                    'receipt_type' => $businessSettings->receipt_type ?? 'SALES INVOICE',
-                    'business_type' => $businessSettings->business_type ?? '',
-                    'address' => $businessSettings->address ?? '',
-                    'proprietor' => $businessSettings->proprietor ?? '',
-                    'vat_reg_tin' => $businessSettings->vat_reg_tin ?? '',
-                    'phone' => $businessSettings->phone ?? '',
-                    'receipt_footer_note' => $businessSettings->receipt_footer_note ?? '',
+                    'business_name' => (string) ($businessSettings->business_name ?? ''),
+                    'receipt_type' => (string) ($businessSettings->receipt_type ?? 'SALES INVOICE'),
+                    'business_type' => (string) ($businessSettings->business_type ?? ''),
+                    'address' => (string) ($businessSettings->address ?? ''),
+                    'proprietor' => (string) ($businessSettings->proprietor ?? ''),
+                    'vat_reg_tin' => (string) ($businessSettings->vat_reg_tin ?? ''),
+                    'phone' => (string) ($businessSettings->phone ?? ''),
+                    'receipt_footer_note' => (string) ($businessSettings->receipt_footer_note ?? ''),
                 ]
-            ]);
-        } catch (\Exception $e) {
+            ];
+            
+            return response()->json($responseData);
+        } catch (\Illuminate\Validation\ValidationException $e) {
             DB::rollBack();
             return response()->json([
                 'success' => false,
-                'message' => $e->getMessage()
+                'message' => 'Validation failed',
+                'errors' => $e->errors()
+            ], 422);
+        } catch (\Exception $e) {
+            DB::rollBack();
+            
+            // Log the full error for debugging
+            \Log::error('Sale processing error: ' . $e->getMessage(), [
+                'trace' => $e->getTraceAsString(),
+                'file' => $e->getFile(),
+                'line' => $e->getLine()
+            ]);
+            
+            return response()->json([
+                'success' => false,
+                'message' => $e->getMessage() . ' (Line: ' . $e->getLine() . ')'
             ], 400);
         }
     }

@@ -4,6 +4,7 @@ namespace App\Http\Controllers;
 
 use App\Category;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Gate;
 
 class CategoryController extends Controller
 {
@@ -13,13 +14,11 @@ class CategoryController extends Controller
     }
 
     /**
-     * Check if user has permission to modify categories
+     * Check if user has permission to modify categories (admin only).
      */
     private function checkModifyPermission()
     {
-        if (!auth()->user()->isAdmin()) {
-            abort(403, 'Unauthorized action. Only admins can modify categories.');
-        }
+        Gate::authorize('manage_categories');
     }
 
     public function index()
@@ -42,7 +41,17 @@ class CategoryController extends Controller
             'description' => 'nullable|string',
         ]);
 
-        Category::create($request->all());
+        $category = Category::create($request->all());
+        
+        // Broadcast category creation for real-time sync
+        if (config('broadcasting.default') !== 'null') {
+            try {
+                event(new \App\Events\CategoryUpdated($category, 'created', auth()->user()->role, auth()->user()->name));
+            } catch (\Throwable $e) {
+                \Log::warning('Failed to broadcast CategoryUpdated event: ' . $e->getMessage());
+            }
+        }
+        
         return redirect()->route('categories.index')->with('success', 'Category created successfully.');
     }
 
@@ -67,6 +76,16 @@ class CategoryController extends Controller
         ]);
 
         $category->update($request->all());
+        
+        // Broadcast category update for real-time sync
+        if (config('broadcasting.default') !== 'null') {
+            try {
+                event(new \App\Events\CategoryUpdated($category, 'updated', auth()->user()->role, auth()->user()->name));
+            } catch (\Throwable $e) {
+                \Log::warning('Failed to broadcast CategoryUpdated event: ' . $e->getMessage());
+            }
+        }
+        
         return redirect()->route('categories.index')->with('success', 'Category updated successfully.');
     }
 
@@ -76,6 +95,19 @@ class CategoryController extends Controller
         if ($category->products()->count() > 0) {
             return redirect()->route('categories.index')->with('error', 'Cannot delete category with existing products.');
         }
+        
+        // Store category data before deletion for broadcast
+        $categoryData = $category->toArray();
+        
+        // Broadcast category deletion before deleting
+        if (config('broadcasting.default') !== 'null') {
+            try {
+                event(new \App\Events\CategoryUpdated($category, 'deleted', auth()->user()->role, auth()->user()->name));
+            } catch (\Throwable $e) {
+                \Log::warning('Failed to broadcast CategoryUpdated event: ' . $e->getMessage());
+            }
+        }
+        
         $category->delete();
         return redirect()->route('categories.index')->with('success', 'Category deleted successfully.');
     }

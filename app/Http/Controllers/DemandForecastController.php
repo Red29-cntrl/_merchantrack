@@ -9,13 +9,17 @@ use App\Category;
 use App\InventoryMovement;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Gate;
 
 class DemandForecastController extends Controller
 {
     public function __construct()
     {
         $this->middleware('auth');
-        $this->middleware('admin');
+        $this->middleware(function ($request, $next) {
+            Gate::authorize('manage_forecasts');
+            return $next($request);
+        });
     }
 
     public function index(Request $request)

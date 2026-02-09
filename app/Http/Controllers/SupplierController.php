@@ -4,13 +4,17 @@ namespace App\Http\Controllers;
 
 use App\Supplier;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Gate;
 
 class SupplierController extends Controller
 {
     public function __construct()
     {
         $this->middleware('auth');
-        $this->middleware('admin');
+        $this->middleware(function ($request, $next) {
+            Gate::authorize('manage_suppliers');
+            return $next($request);
+        });
     }
 
     /**
